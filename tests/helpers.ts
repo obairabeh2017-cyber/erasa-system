@@ -1,25 +1,43 @@
 import { PrismaClient } from "@prisma/client";
+import { PGlite } from "@electric-sql/pglite";
+import { PrismaPGlite } from "pglite-prisma-adapter";
 import fs from "node:fs";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
 import { ensureDefaults } from "@/lib/services/setup";
-import { sqliteUrl } from "@/lib/services/backup";
 
-const dir = path.resolve(process.cwd(), "test-data");
-const clients: PrismaClient[] = [];
+// قاعدة PostgreSQL حقيقية داخل الذاكرة (PGlite) لكل اختبار، مُنشأة من ملفات الترحيل الفعلية
+// نفسها التي تُطبّق على Neon — دون الحاجة لخادم خارجي.
+const migrationsDir = path.resolve(process.cwd(), "prisma", "migrations");
+const migrationSql = fs
+  .readdirSync(migrationsDir, { withFileTypes: true })
+  .filter((d) => d.isDirectory())
+  .map((d) => d.name)
+  .sort()
+  .map((d) => fs.readFileSync(path.join(migrationsDir, d, "migration.sql"), "utf8"))
+  .join("\n");
 
-/** قاعدة بيانات جديدة معزولة لكل اختبار (نسخة من القالب المُرحّل). */
+const open: { db: PrismaClient; pg: PGlite }[] = [];
+
+export async function emptyDb(): Promise<PrismaClient> {
+  const pg = new PGlite();
+  await pg.exec(migrationSql);
+  const db = new PrismaClient({ adapter: new PrismaPGlite(pg) });
+  open.push({ db, pg });
+  return db;
+}
+
+/** قاعدة جديدة معزولة مع القوائم الافتراضية. */
 export async function freshDb(): Promise<PrismaClient> {
-  const file = path.join(dir, `t-${randomUUID()}.db`);
-  fs.copyFileSync(path.join(dir, "template.db"), file);
-  const db = new PrismaClient({ datasourceUrl: sqliteUrl(file) });
-  clients.push(db);
+  const db = await emptyDb();
   await ensureDefaults(db);
   return db;
 }
 
 export async function closeAll() {
-  await Promise.all(clients.splice(0).map((c) => c.$disconnect()));
+  for (const { db, pg } of open.splice(0)) {
+    await db.$disconnect();
+    await pg.close();
+  }
 }
 
 export const Q = (n: number) => Math.round(n * 1000); // كمية

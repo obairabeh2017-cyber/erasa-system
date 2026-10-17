@@ -1,71 +1,138 @@
-import { PrismaClient } from "@prisma/client";
+import { Prisma, type PrismaClient } from "@prisma/client";
 import fs from "node:fs";
 import path from "node:path";
+import { checkStockIntegrity } from "./inventory";
 
-/** مسار ملف قاعدة البيانات من DATABASE_URL (المسار النسبي يُحسب من مجلد prisma كما يفعل Prisma). */
-export function resolveDbPath(url = process.env.DATABASE_URL ?? "", root = process.cwd()): string {
-  const raw = url.replace(/^file:/, "").split("?")[0];
-  return path.isAbsolute(raw) ? raw : path.resolve(root, "prisma", raw);
+/**
+ * النسخ الاحتياطي: ملف JSON كامل يحتوي كل الجداول (بما فيها الإيصالات).
+ * - يُنزّل من الإعدادات في أي وقت، ويُحفظ تلقائياً على القرص عند التشغيل المحلي.
+ * - الاستعادة تتم في معاملة واحدة (كلها أو لا شيء) ثم يُتحقق من عدد السجلات وسلامة المخزون.
+ * - على Neon تتوفر أيضاً نقاط استعادة زمنية من لوحة تحكم Neon.
+ */
+
+// ترتيب الجداول بحسب المفاتيح الأجنبية (الأب قبل الابن)
+export const MODEL_ORDER = [
+  "OwnerSettings", "AppSettings", "AuditLog", "DocumentSequence", "Category", "Unit", "Item", "StockMovement",
+  "ProductRecipe", "RecipeLine", "ProductionOrder", "ProductionMaterial", "Supplier", "Customer", "Employee",
+  "CashAccount", "RecurringExpense", "Purchase", "PurchaseItem", "Sale", "SaleItem", "SaleReturn", "SaleReturnItem",
+  "Expense", "Attachment", "OtherIncome", "EmployeeTransaction", "Payment", "PaymentAllocation", "Reminder", "MonthlyReport",
+] as const;
+
+export const BACKUP_FORMAT = "erasa-backup";
+export const BACKUP_VERSION = 1;
+
+export type BackupDump = {
+  format: string;
+  version: number;
+  exportedAt: string;
+  counts: Record<string, number>;
+  tables: Record<string, Record<string, unknown>[]>;
+};
+
+type Delegate = {
+  findMany: (args?: unknown) => Promise<Record<string, unknown>[]>;
+  createMany: (args: { data: Record<string, unknown>[] }) => Promise<unknown>;
+  count: () => Promise<number>;
+};
+
+function delegate(db: PrismaClient | Prisma.TransactionClient, model: string): Delegate {
+  const key = model[0].toLowerCase() + model.slice(1);
+  return (db as unknown as Record<string, Delegate>)[key];
 }
 
-/** عنوان Prisma لملف SQLite: مسار مطلق محسوب من مجلد العمل وبفواصل /. */
-export function sqliteUrl(file: string, root = process.cwd()): string {
-  return "file:" + path.resolve(root, file).split("\\").join("/");
+function modelMeta(name: string) {
+  const m = Prisma.dmmf.datamodel.models.find((x) => x.name === name);
+  if (!m) throw new Error(`unknown model ${name}`);
+  const scalars = m.fields.filter((f) => f.kind === "scalar");
+  return {
+    dateFields: scalars.filter((f) => f.type === "DateTime").map((f) => f.name),
+    bytesFields: scalars.filter((f) => f.type === "Bytes").map((f) => f.name),
+    serialId: scalars.some((f) => f.name === "id" && typeof f.default === "object" && f.default !== null && "name" in f.default && f.default.name === "autoincrement"),
+  };
 }
 
-export function backupDir(root = process.cwd()): string {
-  return path.resolve(root, process.env.BACKUP_DIR || "./backups");
-}
-
-function stamp(d = new Date()): string {
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
-}
-
-/** فحص سلامة ملف SQLite عبر PRAGMA integrity_check. */
-export async function verifyDatabaseFile(file: string): Promise<{ ok: boolean; result: string }> {
-  if (!fs.existsSync(file)) return { ok: false, result: "الملف غير موجود" };
-  const client = new PrismaClient({ datasourceUrl: sqliteUrl(file) });
-  try {
-    const rows = await client.$queryRawUnsafe<{ integrity_check: string }[]>("PRAGMA integrity_check");
-    const result = rows.map((r) => r.integrity_check).join("; ");
-    return { ok: result === "ok", result };
-  } finally {
-    await client.$disconnect();
+/** يصدّر كل البيانات إلى كائن JSON قابل للحفظ. */
+export async function exportAll(db: PrismaClient): Promise<BackupDump> {
+  const tables: BackupDump["tables"] = {};
+  const counts: Record<string, number> = {};
+  for (const model of MODEL_ORDER) {
+    const meta = modelMeta(model);
+    const rows = await delegate(db, model).findMany({ orderBy: { [model === "DocumentSequence" ? "prefix" : "id"]: "asc" } });
+    tables[model] = rows.map((r) => {
+      const out: Record<string, unknown> = { ...r };
+      for (const f of meta.bytesFields) if (out[f]) out[f] = Buffer.from(out[f] as Uint8Array).toString("base64");
+      return out;
+    });
+    counts[model] = rows.length;
   }
+  return { format: BACKUP_FORMAT, version: BACKUP_VERSION, exportedAt: new Date().toISOString(), counts, tables };
+}
+
+export function backupFilename(d = new Date()): string {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `erasa-backup-${d.getUTCFullYear()}${p(d.getUTCMonth() + 1)}${p(d.getUTCDate())}-${p(d.getUTCHours())}${p(d.getUTCMinutes())}${p(d.getUTCSeconds())}.json`;
 }
 
 /**
- * نسخة احتياطية آمنة أثناء التشغيل باستخدام `VACUUM INTO` (آلية مدعومة من SQLite تُنتج
- * لقطة متسقة حتى لو كانت هناك عمليات كتابة)، ثم فحص سلامة النسخة وحذف الأقدم من العدد المحدد.
+ * يستعيد نسخة احتياطية في معاملة واحدة.
+ * بدون replace: يرفض إن كانت القاعدة الهدف تحتوي بيانات أعمال.
+ * مع replace: يمسح كل الجداول أولاً (داخل نفس المعاملة، فلا يُفقد شيء إن فشلت الاستعادة).
  */
-export async function createBackup(
-  db: PrismaClient,
-  opts: { dir?: string; keep?: number; label?: string } = {},
-): Promise<{ file: string; size: number }> {
-  const dir = opts.dir ?? backupDir();
-  fs.mkdirSync(dir, { recursive: true });
-  const safeLabel = opts.label ? "-" + opts.label.replace(/[^a-zA-Z0-9_-]/g, "") : "";
-  let file = path.join(dir, `furniture-${stamp()}${safeLabel}.db`);
-  let n = 1;
-  while (fs.existsSync(file)) file = path.join(dir, `furniture-${stamp()}${safeLabel}-${n++}.db`);
-  // المسار نسبي إلى مجلد العمل الحالي (يعمل أيضاً في بيئات ويندوز المعزولة)
-  const target = path.relative(process.cwd(), file).split("\\").join("/");
-  await db.$executeRawUnsafe(`VACUUM INTO '${target.replace(/'/g, "''")}'`);
-  const check = await verifyDatabaseFile(file);
-  if (!check.ok) {
-    fs.rmSync(file, { force: true });
-    throw new Error(`فشل فحص سلامة النسخة الاحتياطية: ${check.result}`);
-  }
-  if (opts.keep && opts.keep > 0) pruneBackups(dir, opts.keep);
-  return { file, size: fs.statSync(file).size };
+export async function importAll(db: PrismaClient, dump: BackupDump, opts: { replace?: boolean } = {}) {
+  if (dump?.format !== BACKUP_FORMAT || typeof dump.tables !== "object") throw new Error("الملف ليس نسخة احتياطية صالحة لهذا البرنامج");
+  if (dump.version > BACKUP_VERSION) throw new Error("النسخة الاحتياطية من إصدار أحدث من البرنامج");
+
+  await db.$transaction(
+    async (tx) => {
+      if (!opts.replace) {
+        const busy = (await tx.item.count()) + (await tx.sale.count()) + (await tx.payment.count()) + (await tx.employee.count());
+        if (busy > 0) throw new Error("القاعدة الهدف تحتوي بيانات؛ استخدم خيار الاستبدال (--replace) بعد التأكد");
+      }
+      const all = [...MODEL_ORDER, "LoginAttempt"].map((m) => `"${m}"`).join(", ");
+      await tx.$executeRawUnsafe(`TRUNCATE TABLE ${all} RESTART IDENTITY CASCADE`);
+      for (const model of MODEL_ORDER) {
+        const rows = dump.tables[model] ?? [];
+        if (rows.length === 0) continue;
+        const meta = modelMeta(model);
+        const data = rows.map((r) => {
+          const o: Record<string, unknown> = { ...r };
+          for (const f of meta.dateFields) if (o[f] != null) o[f] = new Date(o[f] as string);
+          for (const f of meta.bytesFields) if (o[f] != null) o[f] = new Uint8Array(Buffer.from(o[f] as string, "base64"));
+          return o;
+        });
+        for (let i = 0; i < data.length; i += 500) await delegate(tx, model).createMany({ data: data.slice(i, i + 500) });
+        if (meta.serialId) {
+          // مزامنة عدّاد المعرّفات حتى لا تتعارض السجلات الجديدة مع المستعادة
+          await tx.$executeRawUnsafe(
+            `SELECT setval(pg_get_serial_sequence('"${model}"', 'id'), COALESCE((SELECT MAX("id") FROM "${model}"), 1), (SELECT MAX("id") FROM "${model}") IS NOT NULL)`,
+          );
+        }
+      }
+      // التحقق من أن كل جدول استُعيد بالكامل
+      for (const model of MODEL_ORDER) {
+        const expected = (dump.tables[model] ?? []).length;
+        const actual = await delegate(tx, model).count();
+        if (actual !== expected) throw new Error(`فشل التحقق: الجدول ${model} يحتوي ${actual} بدلاً من ${expected}`);
+      }
+    },
+    { timeout: 300_000, maxWait: 30_000 },
+  );
+  const integrity = await checkStockIntegrity(db);
+  if (integrity.mismatches.length) throw new Error(`تمت الاستعادة لكن أرصدة ${integrity.mismatches.length} صنف لا تطابق الحركات`);
+  return { counts: dump.counts };
+}
+
+// ---------- النسخ التلقائي على القرص (التشغيل المحلي فقط) ----------
+
+export function backupDir(root = process.cwd()): string {
+  return path.resolve(root, process.env.BACKUP_DIR || "./backups");
 }
 
 export function listBackups(dir = backupDir()) {
   if (!fs.existsSync(dir)) return [];
   return fs
     .readdirSync(dir)
-    .filter((f) => f.endsWith(".db"))
+    .filter((f) => f.endsWith(".json"))
     .map((f) => {
       const st = fs.statSync(path.join(dir, f));
       return { name: f, size: st.size, createdAt: st.mtime };
@@ -73,41 +140,40 @@ export function listBackups(dir = backupDir()) {
     .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
 }
 
-/** يحذف الأقدم ويُبقي آخر `keep` نسخة تلقائية/يدوية (نسخ ما قبل الاستعادة لا تُحذف). */
 export function pruneBackups(dir: string, keep: number) {
-  const files = listBackups(dir).filter((f) => !f.name.includes("pre-restore"));
-  for (const f of files.slice(keep)) fs.rmSync(path.join(dir, f.name), { force: true });
+  for (const f of listBackups(dir).slice(keep)) fs.rmSync(path.join(dir, f.name), { force: true });
 }
 
-/**
- * استعادة نسخة احتياطية — يجب إيقاف التطبيق أولاً.
- * 1) فحص سلامة النسخة  2) حفظ نسخة من القاعدة الحالية  3) الاستبدال  4) فحص سلامة القاعدة المستعادة.
- */
-export async function restoreBackup(backupFile: string, targetDb: string, safetyDir: string) {
-  const pre = await verifyDatabaseFile(backupFile);
-  if (!pre.ok) throw new Error(`النسخة الاحتياطية تالفة: ${pre.result}`);
-  fs.mkdirSync(safetyDir, { recursive: true });
-  let safetyCopy: string | null = null;
-  if (fs.existsSync(targetDb)) {
-    safetyCopy = path.join(safetyDir, `furniture-${stamp()}-pre-restore.db`);
-    fs.copyFileSync(targetDb, safetyCopy);
-  }
-  for (const suffix of ["-wal", "-shm", "-journal"]) fs.rmSync(targetDb + suffix, { force: true });
-  fs.copyFileSync(backupFile, targetDb);
-  const post = await verifyDatabaseFile(targetDb);
-  if (!post.ok) {
-    if (safetyCopy) fs.copyFileSync(safetyCopy, targetDb);
-    throw new Error(`فشل فحص السلامة بعد الاستعادة، أُعيدت القاعدة السابقة: ${post.result}`);
-  }
-  return { safetyCopy };
+export async function writeBackupFile(db: PrismaClient, opts: { dir?: string; keep?: number } = {}) {
+  const dir = opts.dir ?? backupDir();
+  fs.mkdirSync(dir, { recursive: true });
+  const file = path.join(dir, backupFilename());
+  const json = JSON.stringify(await exportAll(db));
+  fs.writeFileSync(file, json);
+  // تحقق: الملف يُقرأ ويُحلّل بشكل صحيح
+  const back = JSON.parse(fs.readFileSync(file, "utf8")) as BackupDump;
+  if (back.format !== BACKUP_FORMAT) throw new Error("فشل التحقق من ملف النسخة");
+  if (opts.keep && opts.keep > 0) pruneBackups(dir, opts.keep);
+  return { file, size: json.length };
 }
 
-/** نسخة تلقائية إذا مرّت المدة المحددة منذ آخر نسخة. */
+/** نسخة تلقائية على القرص إذا مرّت المدة المحددة (لا تعمل على Vercel لعدم وجود قرص دائم). */
 export async function autoBackupIfDue(db: PrismaClient, now = new Date()) {
+  if (process.env.VERCEL) return null;
   const s = await db.appSettings.upsert({ where: { id: 1 }, create: { id: 1 }, update: {} });
   const intervalMs = Math.max(1, s.backupIntervalHours) * 3600_000;
   if (s.lastAutoBackupAt && now.getTime() - s.lastAutoBackupAt.getTime() < intervalMs) return null;
-  const r = await createBackup(db, { keep: s.backupKeep, label: "auto" });
+  const r = await writeBackupFile(db, { keep: s.backupKeep });
   await db.appSettings.update({ where: { id: 1 }, data: { lastAutoBackupAt: now } });
   return r;
+}
+
+/** فحص الاتصال بقاعدة البيانات. */
+export async function checkDatabase(db: PrismaClient): Promise<{ ok: boolean; result: string }> {
+  try {
+    await db.$queryRaw`SELECT 1`;
+    return { ok: true, result: "ok" };
+  } catch (e) {
+    return { ok: false, result: e instanceof Error ? e.message : String(e) };
+  }
 }

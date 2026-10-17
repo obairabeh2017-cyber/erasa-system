@@ -1,14 +1,14 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import { PrismaClient } from "@prisma/client";
 import { NextRequest } from "next/server";
-import { freshDb, closeAll, Q, M, makeItem } from "./helpers";
+import { freshDb, emptyDb, closeAll, Q, M, makeItem } from "./helpers";
 import { recordOpeningBalance, recordAdjustment } from "@/lib/services/inventory";
 import { generateReminders, createCustomReminder, completeReminder } from "@/lib/services/reminders";
 import { saveSaleDraft, postSale } from "@/lib/services/sales";
 import { saveRecipe, createProductionOrder, completeProductionOrder } from "@/lib/services/production";
-import { createBackup, restoreBackup, verifyDatabaseFile, sqliteUrl } from "@/lib/services/backup";
+import { exportAll, importAll, type BackupDump } from "@/lib/services/backup";
+import { createExpense } from "@/lib/services/expenses";
 import { parseDateInput } from "@/lib/dates";
 
 const D = (s: string) => parseDateInput(s);
@@ -150,40 +150,66 @@ describe("16) الحماية: المستخدم غير المصادق لا يصل
   });
 });
 
+describe("الدخول على الإنترنت", () => {
+  it("ينشئ المالك من متغيرات البيئة مرة واحدة ويوقف الدخول بعد 5 محاولات فاشلة", async () => {
+    const db = await freshDb();
+    const { checkCredentials } = await import("@/lib/auth/owner");
+    process.env.OWNER_USERNAME = "owner";
+    process.env.OWNER_PASSWORD = "Strong1234";
+    try {
+      expect(await checkCredentials(db, "owner", "Strong1234", "ip-1")).toBeNull();
+      expect(await db.ownerSettings.count()).toBe(1);
+      for (let i = 0; i < 5; i++) expect(await checkCredentials(db, "owner", "wrong", "ip-2")).toMatch(/غير صحيحة/);
+      // حتى كلمة المرور الصحيحة مرفوضة أثناء الإيقاف المؤقت لهذا المصدر
+      expect(await checkCredentials(db, "owner", "Strong1234", "ip-2")).toMatch(/إيقاف/);
+      expect(await checkCredentials(db, "owner", "Strong1234", "ip-3")).toBeNull();
+      // تغيير متغيرات البيئة لاحقاً لا يغيّر المالك الموجود
+      process.env.OWNER_PASSWORD = "Another1234";
+      expect(await checkCredentials(db, "owner", "Another1234", "ip-4")).toMatch(/غير صحيحة/);
+    } finally {
+      delete process.env.OWNER_USERNAME;
+      delete process.env.OWNER_PASSWORD;
+    }
+  });
+});
+
 describe("17) النسخ الاحتياطي والاستعادة", () => {
-  it("ينشئ نسخة سليمة ويستعيدها في بيئة اختبار", async () => {
+  it("ينشئ نسخة كاملة ويستعيدها في قاعدة اختبار جديدة", async () => {
     const db = await freshDb();
     const wood = await makeItem(db, { sku: "W", name: "خشب", type: "RAW" });
     await recordOpeningBalance(db, { itemId: wood.id, qty: Q(100), unitCost: M(10), date: D("2026-01-01") });
-    const dir = path.resolve(process.cwd(), "test-data", `bk-${Date.now()}`);
-    const b = await createBackup(db, { dir, keep: 5, label: "test" });
-    expect((await verifyDatabaseFile(b.file)).ok).toBe(true);
+    const cat = await db.category.findFirstOrThrow({ where: { kind: "EXPENSE" } });
+    await createExpense(db, {
+      date: D("2026-01-02"), categoryId: cat.id, description: "مع إيصال", amount: M(15),
+      receipt: { name: "r.png", mime: "image/png", size: 4, data: new Uint8Array([1, 2, 3, 4]) },
+    });
+    const dump = JSON.parse(JSON.stringify(await exportAll(db))) as BackupDump; // كما لو حُفظ في ملف
+    expect(dump.counts.Item).toBe(1);
+    expect(dump.counts.Attachment).toBe(1);
 
-    // تعديل بعد النسخة ثم الاستعادة إلى قاعدة هدف منفصلة
-    await recordAdjustment(db, { itemId: wood.id, qtyDelta: -Q(40), date: D("2026-01-02"), reason: "بعد النسخة" });
-    const target = path.join(dir, "restored-target.db");
-    fs.copyFileSync(b.file, target); // قاعدة «حالية» ستُستبدل
-    await recordAdjustment(db, { itemId: wood.id, qtyDelta: -Q(10), date: D("2026-01-03"), reason: "x" });
-    const r = await restoreBackup(b.file, target, dir);
-    expect(r.safetyCopy).toBeTruthy();
-    expect((await verifyDatabaseFile(target)).ok).toBe(true);
-    const restored = new PrismaClient({ datasourceUrl: sqliteUrl(target) });
-    const item = await restored.item.findUniqueOrThrow({ where: { sku: "W" } });
+    // تعديل بعد النسخة (يجب ألا يظهر بعد الاستعادة)
+    await recordAdjustment(db, { itemId: wood.id, qtyDelta: -Q(40), date: D("2026-01-03"), reason: "بعد النسخة" });
+
+    const target = await emptyDb();
+    await importAll(target, dump);
+    const item = await target.item.findUniqueOrThrow({ where: { sku: "W" } });
     expect(item.stockQty).toBe(Q(100));
-    expect(await restored.stockMovement.count()).toBe(1);
-    await restored.$disconnect();
+    expect(await target.stockMovement.count()).toBe(1);
+    const att = await target.attachment.findFirstOrThrow();
+    expect([...att.data]).toEqual([1, 2, 3, 4]);
+    // عدّادات المعرّفات مُزامنة: الإضافة الجديدة لا تتعارض
+    const n = await makeItem(target, { sku: "N", name: "جديد", type: "RAW" });
+    expect(n.id).toBeGreaterThan(item.id);
 
-    // نسخة تالفة تُرفض ولا تمس القاعدة الهدف
-    const bad = path.join(dir, "corrupt.db");
-    fs.writeFileSync(bad, "not a database");
-    await expect(restoreBackup(bad, target, dir)).rejects.toThrow();
-    expect((await verifyDatabaseFile(target)).ok).toBe(true);
-  });
+    // الاستعادة فوق قاعدة فيها بيانات تُرفض بدون --replace، وتنجح مع replace
+    await expect(importAll(db, dump)).rejects.toThrow(/تحتوي بيانات/);
+    await importAll(db, dump, { replace: true });
+    expect((await db.item.findUniqueOrThrow({ where: { sku: "W" } })).stockQty).toBe(Q(100));
 
-  it("يحتفظ بعدد محدد فقط من النسخ", async () => {
-    const db = await freshDb();
-    const dir = path.resolve(process.cwd(), "test-data", `bk-keep-${Date.now()}`);
-    for (let i = 0; i < 4; i++) await createBackup(db, { dir, keep: 2, label: `n${i}` });
-    expect(fs.readdirSync(dir).filter((f) => f.endsWith(".db")).length).toBe(2);
+    // ملف تالف يُرفض والقاعدة كما هي (المعاملة تُلغى بالكامل)
+    const broken = { ...dump, tables: { ...dump.tables, StockMovement: [{ id: 999, itemId: 12345 }] } } as BackupDump;
+    await expect(importAll(target, broken, { replace: true })).rejects.toThrow();
+    expect(await target.item.count()).toBe(2);
+    await expect(importAll(target, { format: "x" } as unknown as BackupDump)).rejects.toThrow(/ليس نسخة/);
   });
 });

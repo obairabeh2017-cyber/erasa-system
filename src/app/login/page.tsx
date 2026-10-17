@@ -10,7 +10,7 @@ export const metadata = { title: "تسجيل الدخول" };
 export default async function LoginPage() {
   if (await getOwner()) redirect("/");
   const settings = await prisma.appSettings.findUnique({ where: { id: 1 } });
-  const hasOwner = (await prisma.ownerSettings.count()) > 0;
+  const hasOwner = (await prisma.ownerSettings.count()) > 0 || !!process.env.OWNER_USERNAME;
   return (
     <main className="flex min-h-screen items-center justify-center bg-brand-900 px-4">
       <div className="card w-full max-w-sm p-6">

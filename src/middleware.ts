@@ -1,7 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { SESSION_COOKIE, verifySession } from "@/lib/auth/session";
 
-const PUBLIC_PATHS = ["/login"];
+// /api/cron محمي بسر CRON_SECRET داخل المسار نفسه
+const PUBLIC_PATHS = ["/login", "/api/cron"];
 
 /**
  * حماية كل المسارات: بدون جلسة مالك صالحة تُحوّل الصفحات إلى /login،

@@ -3,8 +3,8 @@ import type { NextConfig } from "next";
 const nextConfig: NextConfig = {
   poweredByHeader: false,
   experimental: {
-    // يسمح برفع صور/ملفات الإيصالات حتى 5 ميغابايت عبر إجراءات الخادم
-    serverActions: { bodySizeLimit: "6mb" },
+    // يسمح برفع صور/ملفات الإيصالات حتى 4 ميغابايت (حد Vercel لحجم الطلب 4.5 ميغابايت)
+    serverActions: { bodySizeLimit: "4.5mb" },
   },
   async headers() {
     return [
@@ -21,3 +21,4 @@ const nextConfig: NextConfig = {
 };
 
 export default nextConfig;
+

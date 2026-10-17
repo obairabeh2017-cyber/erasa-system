@@ -5,7 +5,7 @@ import { prisma } from "@/lib/db";
 import { ownerAction } from "@/lib/actions";
 import * as f from "@/lib/form";
 import { audit } from "@/lib/audit";
-import { createBackup, verifyDatabaseFile, resolveDbPath } from "@/lib/services/backup";
+import { checkDatabase, writeBackupFile } from "@/lib/services/backup";
 import { checkStockIntegrity } from "@/lib/services/inventory";
 import { hashPassword, validatePasswordStrength, verifyPassword } from "@/lib/auth/password";
 import { clearSession, requireOwner } from "@/lib/auth/owner";
@@ -49,19 +49,20 @@ export const logoutEverywhereAction = ownerAction(async () => {
   return "/login";
 });
 
-export const backupNowAction = ownerAction(async (fd) => {
+export const backupNowAction = ownerAction(async () => {
+  // حفظ نسخة على قرص الجهاز (التشغيل المحلي فقط؛ على Vercel استخدم زر التنزيل)
+  if (process.env.VERCEL) throw new BusinessError("على الاستضافة السحابية استخدم زر «تنزيل نسخة احتياطية» لحفظها على جهازك");
   const s = await prisma.appSettings.findUniqueOrThrow({ where: { id: 1 } });
-  const label = f.optText(fd, "label", 30) ?? "manual";
-  const r = await createBackup(prisma, { keep: s.backupKeep, label });
+  const r = await writeBackupFile(prisma, { keep: s.backupKeep });
   await audit(prisma, "BACKUP_CREATED", "Backup", null, { file: path.basename(r.file) });
-  return { message: `تم إنشاء النسخة: ${path.basename(r.file)} (${Math.round(r.size / 1024)} KB) وفُحصت سلامتها` };
+  return { message: `تم إنشاء النسخة: ${path.basename(r.file)} (${Math.round(r.size / 1024)} KB)` };
 });
 
 export const integrityAction = ownerAction(async () => {
-  const db = await verifyDatabaseFile(resolveDbPath());
+  const db = await checkDatabase(prisma);
   const stock = await checkStockIntegrity(prisma);
   const problems: string[] = [];
-  if (!db.ok) problems.push(`سلامة قاعدة البيانات: ${db.result}`);
+  if (!db.ok) problems.push(`الاتصال بقاعدة البيانات: ${db.result}`);
   for (const m of stock.mismatches) problems.push(`الصنف ${m.sku}: الرصيد المخزن لا يطابق مجموع الحركات`);
   if (problems.length) throw new BusinessError(problems.join(" | "));
   return { message: `قاعدة البيانات سليمة، وأرصدة ${stock.checked} صنف تطابق حركات المخزون` };

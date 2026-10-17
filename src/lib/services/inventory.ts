@@ -27,6 +27,9 @@ export type MovementResult = { movementId: number; qtyDelta: number; valueDelta:
  */
 export async function postMovement(tx: Tx, m: MovementInput): Promise<MovementResult> {
   assert(m.qtyDelta !== 0, "كمية الحركة لا يمكن أن تكون صفراً");
+  // قفل صف الصنف حتى نهاية المعاملة: الطلبات المتزامنة (حتى من خوادم مختلفة) تنتظر دورها
+  // فلا تُحسب التكلفة أو الرصيد من قيم قديمة.
+  await tx.$queryRaw`SELECT "id" FROM "Item" WHERE "id" = ${m.itemId} FOR UPDATE`;
   const item = await tx.item.findUnique({ where: { id: m.itemId } });
   if (!item) throw new BusinessError("الصنف غير موجود");
 

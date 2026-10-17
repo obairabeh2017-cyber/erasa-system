@@ -25,7 +25,8 @@ export default async function SettingsPage() {
     prisma.unit.findMany({ orderBy: { name: "asc" } }),
     prisma.auditLog.findMany({ orderBy: { id: "desc" }, take: 50 }),
   ]);
-  const backups = listBackups().slice(0, 30);
+  const onCloud = !!process.env.VERCEL;
+  const backups = onCloud ? [] : listBackups().slice(0, 30);
 
   return (
     <div className="space-y-5">
@@ -48,20 +49,29 @@ export default async function SettingsPage() {
 
       <Section title="النسخ الاحتياطي">
         <div className="mb-3 space-y-2 text-sm text-stone-600">
-          <p>مجلد النسخ: <code dir="ltr" className="rounded bg-stone-100 px-1">{backupDir()}</code> — آخر نسخة تلقائية: {formatDateTime(s.lastAutoBackupAt)}</p>
-          <Alert tone="warn">النسخ تُحفظ على نفس الجهاز. انسخ مجلد النسخ دورياً إلى ذاكرة USB أو قرص خارجي. لاستعادة نسخة: أوقف البرنامج ثم شغّل <code dir="ltr">npm run db:restore -- &lt;اسم الملف&gt;</code> (التفاصيل في ملف README).</Alert>
+          <p>النسخة الاحتياطية ملف JSON كامل يضم كل البيانات والإيصالات. نزّلها بانتظام (أسبوعياً على الأقل) واحفظها على جهازك أو ذاكرة USB.</p>
+          <Alert tone="info">على الاستضافة السحابية (Neon) تتوفر أيضاً نقاط استعادة زمنية من لوحة تحكم Neon. للاستعادة من ملف: <code dir="ltr">npm run db:restore -- &lt;الملف&gt; --replace</code> (التفاصيل في README).</Alert>
         </div>
-        <ActionForm action={backupNowAction} className="mb-4 flex flex-wrap items-end gap-2">
-          <div><label className="label" htmlFor="label">وسم اختياري (بالإنجليزية)</label><input id="label" name="label" className="input" dir="ltr" placeholder="before-cleanup" /></div>
-          <SubmitButton>إنشاء نسخة احتياطية الآن</SubmitButton>
-        </ActionForm>
-        {backups.length === 0 ? <p className="text-sm text-stone-500">لا توجد نسخ بعد.</p> : (
-          <div className="table-wrap">
-            <table className="table">
-              <thead><tr><th>الملف</th><th>الحجم</th><th>التاريخ</th></tr></thead>
-              <tbody>{backups.map((b) => <tr key={b.name}><td dir="ltr" className="text-end font-mono text-xs">{b.name}</td><td className="num">{Math.round(b.size / 1024)} KB</td><td>{formatDateTime(b.createdAt)}</td></tr>)}</tbody>
-            </table>
-          </div>
+        <div className="mb-4 flex flex-wrap items-end gap-2">
+          <a href={"/api/backup"} download className="btn btn-primary">⬇ تنزيل نسخة احتياطية كاملة</a>
+          {!onCloud && (
+            <ActionForm action={backupNowAction} showSuccess>
+              <SubmitButton className="btn btn-secondary">حفظ نسخة على هذا الجهاز الآن</SubmitButton>
+            </ActionForm>
+          )}
+        </div>
+        {!onCloud && (
+          <>
+            <p className="mb-2 text-sm text-stone-600">مجلد النسخ المحلية: <code dir="ltr" className="rounded bg-stone-100 px-1">{backupDir()}</code> — آخر نسخة تلقائية: {formatDateTime(s.lastAutoBackupAt)}</p>
+            {backups.length === 0 ? <p className="text-sm text-stone-500">لا توجد نسخ محلية بعد.</p> : (
+              <div className="table-wrap">
+                <table className="table">
+                  <thead><tr><th>الملف</th><th>الحجم</th><th>التاريخ</th></tr></thead>
+                  <tbody>{backups.map((b) => <tr key={b.name}><td dir="ltr" className="text-end font-mono text-xs">{b.name}</td><td className="num">{Math.round(b.size / 1024)} KB</td><td>{formatDateTime(b.createdAt)}</td></tr>)}</tbody>
+                </table>
+              </div>
+            )}
+          </>
         )}
       </Section>
 

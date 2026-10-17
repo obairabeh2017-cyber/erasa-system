@@ -1,14 +1,15 @@
 {
   "name": "furniture-manager",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
-  "description": "نظام محلي لإدارة مصنع أثاث: المخزون، الإنتاج، المبيعات، المشتريات، الموظفون، المصروفات والتقارير",
+  "description": "شركة ايراسا — نظام إدارة مصنع الأثاث: المخزون، الإنتاج، المبيعات، المشتريات، الموظفون، المصروفات والتقارير",
   "engines": {
     "node": ">=20.19.0"
   },
   "scripts": {
     "dev": "next dev",
     "build": "prisma generate && next build",
+    "vercel-build": "prisma generate && prisma migrate deploy && next build",
     "start": "node server.mjs",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
@@ -34,6 +35,7 @@
     "zod": "4.6.7"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "0.5.10",
     "@eslint/eslintrc": "^3",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
@@ -41,9 +43,13 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "15.5.28",
+    "pglite-prisma-adapter": "0.6.0",
     "tailwindcss": "^4",
     "typescript": "^5",
     "vitest": "3.2.4"
+  },
+  "overrides": {
+    "@prisma/driver-adapter-utils": "6.19.3"
   },
   "allowScripts": {
     "prisma@6.19.3": true,

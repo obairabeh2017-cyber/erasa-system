@@ -6,7 +6,7 @@ import * as f from "@/lib/form";
 import { audit } from "@/lib/audit";
 import { createExpense, createOtherIncome, voidExpense, voidOtherIncome } from "@/lib/services/expenses";
 import { createPayment } from "@/lib/services/payments";
-import { saveReceipt } from "@/lib/storage";
+import { readReceipt } from "@/lib/storage";
 import { BusinessError } from "@/lib/errors";
 import { dayOfPeriod, isPeriod } from "@/lib/dates";
 
@@ -23,8 +23,8 @@ export const createExpenseAction = ownerAction(async (fd) => {
     notes: f.optText(fd, "notes"),
     payNow: payment === "now" ? { accountId: f.id(fd, "accountId", "الحساب"), method: f.optText(fd, "method") ?? "CASH", reference: f.optText(fd, "reference") } : null,
   };
-  const receipt = await saveReceipt(fd.get("receipt"));
-  const e = await createExpense(prisma, { ...input, receiptPath: receipt?.path, receiptName: receipt?.name });
+  const receipt = await readReceipt(fd.get("receipt"));
+  const e = await createExpense(prisma, { ...input, receipt });
   return `/expenses/${e.id}`;
 });
 

@@ -24,7 +24,7 @@ export default async function ExpensesPage({ searchParams }: { searchParams: Pro
     ...(range ? { date: { gte: range.start, lt: range.end } } : {}),
   };
   const [rows, total, categories, agg] = await Promise.all([
-    prisma.expense.findMany({ where, include: { category: true, paidByEmployee: true, allocations: { where: { payment: { status: "POSTED" } } } }, orderBy: [{ [sort]: dir }, { id: "desc" }], skip, take }),
+    prisma.expense.findMany({ where, include: { category: true, paidByEmployee: true, receipt: { select: { id: true } }, allocations: { where: { payment: { status: "POSTED" } } } }, orderBy: [{ [sort]: dir }, { id: "desc" }], skip, take }),
     prisma.expense.count({ where }),
     prisma.category.findMany({ where: { kind: "EXPENSE" }, orderBy: { name: "asc" } }),
     prisma.expense.aggregate({ where: { ...where, status: "POSTED" }, _sum: { amount: true } }),
@@ -64,7 +64,7 @@ export default async function ExpensesPage({ searchParams }: { searchParams: Pro
                     <td><Link href={`/expenses/${e.id}`} className="font-mono text-brand-700 hover:underline" dir="ltr">{e.number}</Link></td>
                     <td>{formatDate(e.date)}</td>
                     <td>{e.category.name}</td>
-                    <td className="max-w-xs truncate">{e.description}{e.receiptPath && " 📎"}</td>
+                    <td className="max-w-xs truncate">{e.description}{e.receipt && " 📎"}</td>
                     <td><Money value={e.amount} /></td>
                     <td>
                       {e.status !== "POSTED" ? "—" : e.paidByEmployee ? <Badge tone="blue">دفعه {e.paidByEmployee.name}</Badge> : paid >= e.amount ? <Badge tone="green">مسدد</Badge> : <Badge tone="amber">متبقي <Money value={e.amount - paid} /></Badge>}

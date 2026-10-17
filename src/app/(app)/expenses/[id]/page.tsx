@@ -15,7 +15,7 @@ export default async function ExpensePage({ params }: { params: Promise<{ id: st
   const { id } = await params;
   const e = await prisma.expense.findUnique({
     where: { id: Number(id) },
-    include: { category: true, employee: true, paidByEmployee: true, recurringExpense: true, allocations: { include: allocationInclude } },
+    include: { category: true, employee: true, paidByEmployee: true, recurringExpense: true, receipt: { select: { id: true, name: true } }, allocations: { include: allocationInclude } },
   });
   if (!e) notFound();
   const [accounts, outstanding] = await Promise.all([accountOptions(), expenseOutstanding(prisma, e.id)]);
@@ -34,7 +34,7 @@ export default async function ExpensePage({ params }: { params: Promise<{ id: st
             ["الاستحقاق", formatDate(e.dueDate)],
             ["مصروف دوري", e.recurringExpense ? `${e.recurringExpense.name} (${e.period})` : "—"],
             ["المتبقي للسداد", e.paidByEmployee ? <Badge key="o" tone="blue">مستحق للموظف</Badge> : <Money key="o" value={outstanding} />],
-            ["الإيصال", e.receiptPath ? <a key="r" href={`/api/receipts/${e.id}`} target="_blank" className="text-brand-700 underline">📎 {e.receiptName ?? "عرض"}</a> : "—"],
+            ["الإيصال", e.receipt ? <a key="r" href={`/api/receipts/${e.id}`} target="_blank" className="text-brand-700 underline">📎 {e.receipt.name}</a> : "—"],
           ]}
         />
         {e.notes && <p className="mt-3 text-sm text-stone-600">ملاحظات: {e.notes}</p>}

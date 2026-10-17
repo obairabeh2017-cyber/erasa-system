@@ -1,5 +1,5 @@
 // =====================================================================
-// نظام إدارة مصنع الأثاث — مخطط قاعدة البيانات (SQLite + Prisma)
+// نظام إدارة مصنع الأثاث — مخطط قاعدة البيانات (PostgreSQL / Neon + Prisma)
 //
 // قواعد التمثيل الرقمي (لا أعداد عشرية عائمة للمال):
 //   * المبالغ المالية: أعداد صحيحة بالدرهم الليبي (1 دينار = 1000 درهم).
@@ -13,8 +13,10 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  // DATABASE_URL: اتصال Neon عبر pooler (للتطبيق) — DATABASE_URL_UNPOOLED: اتصال مباشر (للترحيلات)
+  url       = env("DATABASE_URL")
+  directUrl = env("DATABASE_URL_UNPOOLED")
 }
 
 // ---------- الإعدادات والمالك ----------
@@ -491,8 +493,6 @@ model Expense {
   paidByEmployeeId   Int? // دفعه موظف من ماله الخاص نيابة عن الشركة
   recurringExpenseId Int?
   period             String?
-  receiptPath        String? // مسار داخل مجلد storage (غير عام)
-  receiptName        String?
   status             String    @default("POSTED") // POSTED | VOIDED
   notes              String?
   voidedAt           DateTime?
@@ -504,6 +504,7 @@ model Expense {
   recurringExpense    RecurringExpense?    @relation(fields: [recurringExpenseId], references: [id])
   allocations         PaymentAllocation[]
   employeeTransaction EmployeeTransaction?
+  receipt             Attachment?
 
   @@unique([recurringExpenseId, period])
   @@index([status, date])
@@ -571,4 +572,27 @@ model MonthlyReport {
   data        String // JSON محسوب من الحركات الأصلية وقت التوليد
   generatedAt DateTime @default(now())
   auto        Boolean  @default(false)
+}
+
+// ---------- المرفقات وحماية الدخول ----------
+
+// إيصالات المصروفات تُخزّن داخل قاعدة البيانات (لا يوجد قرص دائم على الاستضافة السحابية)
+model Attachment {
+  id        Int      @id @default(autoincrement())
+  expenseId Int      @unique
+  name      String
+  mime      String
+  size      Int
+  data      Bytes
+  createdAt DateTime @default(now())
+
+  expense Expense @relation(fields: [expenseId], references: [id], onDelete: Cascade)
+}
+
+// محاولات الدخول الفاشلة (مشتركة بين كل نسخ الخادم السحابي)
+model LoginAttempt {
+  key       String   @id
+  count     Int      @default(0)
+  until     DateTime
+  updatedAt DateTime @updatedAt
 }

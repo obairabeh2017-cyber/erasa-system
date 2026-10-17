@@ -4,6 +4,7 @@ import { atomic } from "../tx";
 import { nextNumber } from "../sequence";
 import { audit } from "../audit";
 import { createPaymentTx } from "./payments";
+import type { ReceiptUpload } from "../storage";
 
 export type PayNow = { accountId: number; method?: string; reference?: string | null };
 
@@ -25,8 +26,7 @@ export async function createExpense(
     recurringExpenseId?: number | null;
     period?: string | null;
     notes?: string | null;
-    receiptPath?: string | null;
-    receiptName?: string | null;
+    receipt?: ReceiptUpload | null;
     payNow?: PayNow | null;
   },
 ) {
@@ -52,8 +52,7 @@ export async function createExpense(
           recurringExpenseId: input.recurringExpenseId ?? null,
           period: input.period ?? null,
           notes: input.notes ?? null,
-          receiptPath: input.receiptPath ?? null,
-          receiptName: input.receiptName ?? null,
+          ...(input.receipt ? { receipt: { create: { name: input.receipt.name, mime: input.receipt.mime, size: input.receipt.size, data: input.receipt.data } } } : {}),
         },
       });
     } catch (e) {
