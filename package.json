@@ -1,27 +1,56 @@
 {
   "name": "furniture-manager",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
+  "description": "نظام محلي لإدارة مصنع أثاث: المخزون، الإنتاج، المبيعات، المشتريات، الموظفون، المصروفات والتقارير",
+  "engines": {
+    "node": ">=20.19.0"
+  },
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "lint": "eslint"
+    "build": "prisma generate && next build",
+    "start": "node server.mjs",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "check": "npm run typecheck && npm run lint && npm test",
+    "setup": "prisma migrate deploy && tsx scripts/setup.ts",
+    "owner:set": "tsx scripts/owner-set.ts",
+    "db:migrate": "prisma migrate deploy",
+    "db:status": "prisma migrate status",
+    "db:backup": "tsx scripts/backup.ts",
+    "db:restore": "tsx scripts/restore.ts",
+    "postinstall": "prisma generate"
   },
   "dependencies": {
+    "@prisma/client": "6.19.3",
+    "bcryptjs": "3.0.3",
+    "jose": "6.2.12",
+    "next": "15.5.28",
+    "prisma": "6.19.3",
     "react": "19.1.0",
     "react-dom": "19.1.0",
-    "next": "15.5.28"
+    "tsx": "4.20.6",
+    "zod": "4.6.7"
   },
   "devDependencies": {
-    "typescript": "^5",
+    "@eslint/eslintrc": "^3",
+    "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "@tailwindcss/postcss": "^4",
-    "tailwindcss": "^4",
     "eslint": "^9",
     "eslint-config-next": "15.5.28",
-    "@eslint/eslintrc": "^3"
+    "tailwindcss": "^4",
+    "typescript": "^5",
+    "vitest": "3.2.4"
+  },
+  "allowScripts": {
+    "prisma@6.19.3": true,
+    "@prisma/client@6.19.3": true,
+    "@prisma/engines@6.19.3": true,
+    "esbuild@0.25.12": true,
+    "esbuild@0.28.2": true,
+    "unrs-resolver@1.12.2": true
   }
 }

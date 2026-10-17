@@ -1,26 +1,119 @@
 @import "tailwindcss";
 
+@theme {
+  --color-brand-50: #f0f6ff;
+  --color-brand-100: #dce9fc;
+  --color-brand-200: #bcd5f8;
+  --color-brand-300: #8fb8f0;
+  --color-brand-500: #3b7dd8;
+  --color-brand-600: #2563c4;
+  --color-brand-700: #1d4fa3;
+  --color-brand-800: #173d7d;
+  --color-brand-900: #0f2a57;
+  --font-sans: "Segoe UI", Tahoma, "Noto Sans Arabic", "Noto Kufi Arabic", Arial, sans-serif;
+}
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  color-scheme: light;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html,
+body {
+  background: #f4f7fb;
+  color: #1c1917;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+.num {
+  font-variant-numeric: tabular-nums;
+  direction: ltr;
+  unicode-bidi: isolate;
+  display: inline-block;
+}
+
+@layer components {
+  .card {
+    @apply rounded-xl border border-stone-200 bg-white shadow-sm;
+  }
+  .btn {
+    @apply inline-flex items-center justify-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600 disabled:cursor-not-allowed disabled:opacity-60;
+  }
+  /* الاستخدام: class="btn btn-primary" */
+  .btn-primary {
+    @apply bg-brand-700 text-white hover:bg-brand-800;
+  }
+  .btn-secondary {
+    @apply border border-stone-300 bg-white text-stone-800 hover:bg-stone-50;
+  }
+  .btn-danger {
+    @apply bg-red-700 text-white hover:bg-red-800;
+  }
+  .btn-ghost {
+    @apply text-stone-700 hover:bg-stone-100;
+  }
+  .btn-sm {
+    @apply px-2.5 py-1.5 text-xs;
+  }
+  .input {
+    @apply block w-full rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm text-stone-900 placeholder:text-stone-400 focus:border-brand-600 focus:outline-none focus:ring-2 focus:ring-brand-200 disabled:bg-stone-100;
+  }
+  .label {
+    @apply mb-1 block text-sm font-medium text-stone-700;
+  }
+  .table-wrap {
+    @apply overflow-x-auto rounded-xl border border-stone-200 bg-white;
+  }
+  .table {
+    @apply w-full min-w-max text-sm;
+  }
+  .table th {
+    @apply whitespace-nowrap border-b border-stone-200 bg-stone-50 px-3 py-2.5 text-start font-semibold text-stone-600;
+  }
+  .table td {
+    @apply whitespace-nowrap border-b border-stone-100 px-3 py-2.5 text-stone-800;
+  }
+  .table tbody tr:hover {
+    @apply bg-brand-50;
+  }
+  .badge {
+    @apply inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium;
+  }
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  html,
+  body {
+    background: #fff !important;
+  }
+  .card {
+    box-shadow: none !important;
+    border-color: #ddd !important;
+  }
+  .print-full {
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    max-width: none !important;
+  }
+  .table-wrap {
+    overflow: visible !important;
+  }
+  .table {
+    min-width: 0 !important;
+  }
+  .table td,
+  .table th {
+    white-space: normal !important;
+    padding: 4px 6px !important;
+  }
+  @page {
+    margin: 12mm;
+  }
 }

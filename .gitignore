@@ -39,3 +39,15 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# بيانات محلية — لا تُرفع أبداً
+/data/
+/backups/
+/storage/
+/test-data/
+.env
+!.env.example
+
+/FIRST-LOGIN.txt
+
+/.claude/

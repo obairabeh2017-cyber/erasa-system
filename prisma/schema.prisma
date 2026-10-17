@@ -1,0 +1,574 @@
+// =====================================================================
+// نظام إدارة مصنع الأثاث — مخطط قاعدة البيانات (SQLite + Prisma)
+//
+// قواعد التمثيل الرقمي (لا أعداد عشرية عائمة للمال):
+//   * المبالغ المالية: أعداد صحيحة بالدرهم الليبي (1 دينار = 1000 درهم).
+//   * الكميات: أعداد صحيحة بالألف من الوحدة (1 متر = 1000).
+//   * نسب الهدر: نقاط أساس (1% = 100).
+//   * التواريخ: تُخزّن بتوقيت UTC وتُعرض بتوقيت طرابلس (Africa/Tripoli).
+// =====================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- الإعدادات والمالك ----------
+
+model OwnerSettings {
+  id             Int      @id @default(1)
+  username       String   @unique
+  passwordHash   String
+  sessionVersion Int      @default(1)
+  updatedAt      DateTime @updatedAt
+}
+
+model AppSettings {
+  id                    Int       @id @default(1)
+  companyName           String    @default("شركة ايراسا")
+  companyPhone          String?
+  companyAddress        String?
+  invoiceFooter         String?
+  backupKeep            Int       @default(30)
+  backupIntervalHours   Int       @default(24)
+  lastAutoBackupAt      DateTime?
+  debtReminderDaysAhead Int       @default(3)
+  salaryDayOfMonth      Int       @default(28)
+  salaryReminderDays    Int       @default(3)
+  lastReminderRunAt     DateTime?
+  updatedAt             DateTime  @updatedAt
+}
+
+model AuditLog {
+  id         Int      @id @default(autoincrement())
+  action     String
+  entityType String
+  entityId   Int?
+  details    String?
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}
+
+// تسلسل الترقيم الخاص بكل نوع مستند (INV, PUR, PRD, ...)
+model DocumentSequence {
+  prefix String @id
+  next   Int    @default(1)
+}
+
+// ---------- الأصناف والمخزون ----------
+
+model Category {
+  id        Int      @id @default(autoincrement())
+  name      String
+  kind      String // ITEM | EXPENSE | INCOME
+  createdAt DateTime @default(now())
+
+  items             Item[]
+  expenses          Expense[]
+  otherIncomes      OtherIncome[]
+  recurringExpenses RecurringExpense[]
+
+  @@unique([name, kind])
+}
+
+model Unit {
+  id        Int      @id @default(autoincrement())
+  name      String   @unique
+  createdAt DateTime @default(now())
+  items     Item[]
+}
+
+model Item {
+  id         Int      @id @default(autoincrement())
+  sku        String   @unique
+  name       String
+  type       String // RAW | FINISHED
+  categoryId Int?
+  unitId     Int
+  minStock   Int      @default(0) // كمية × 1000
+  salePrice  Int      @default(0) // درهم
+  notes      String?
+  active     Boolean  @default(true)
+  // رصيد مُشتق: يُحدَّث فقط داخل نفس المعاملة التي تُسجّل حركة المخزون،
+  // ويمكن مطابقته دائماً مع مجموع الحركات (انظر فحص سلامة المخزون).
+  stockQty   Int      @default(0)
+  stockValue Int      @default(0)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  category           Category?            @relation(fields: [categoryId], references: [id])
+  unit               Unit                 @relation(fields: [unitId], references: [id])
+  movements          StockMovement[]
+  purchaseItems      PurchaseItem[]
+  saleItems          SaleItem[]
+  recipes            ProductRecipe[]      @relation("RecipeProduct")
+  recipeLines        RecipeLine[]         @relation("RecipeMaterial")
+  productionOrders   ProductionOrder[]
+  productionMaterial ProductionMaterial[]
+
+  @@index([type, active])
+  @@index([name])
+}
+
+model StockMovement {
+  id           Int      @id @default(autoincrement())
+  itemId       Int
+  // OPENING | PURCHASE | PURCHASE_VOID | PRODUCTION_CONSUME | PRODUCTION_OUTPUT
+  // SALE | SALE_VOID | SALE_RETURN | ADJUSTMENT
+  type         String
+  qtyDelta     Int
+  valueDelta   Int
+  balanceAfter Int
+  date         DateTime
+  sourceType   String // OPENING | ADJUSTMENT | PURCHASE | PRODUCTION | SALE | SALE_RETURN
+  sourceId     Int?
+  // مفتاح فريد يمنع تسجيل نفس الحركة مرتين (مثلاً PRD:12:CONSUME:5)
+  uniqueKey    String?  @unique
+  notes        String?
+  createdAt    DateTime @default(now())
+
+  item Item @relation(fields: [itemId], references: [id])
+
+  @@index([itemId, date])
+  @@index([sourceType, sourceId])
+  @@index([type, date])
+}
+
+// ---------- الوصفات والإنتاج ----------
+
+model ProductRecipe {
+  id        Int      @id @default(autoincrement())
+  productId Int
+  version   Int
+  isActive  Boolean  @default(true)
+  outputQty Int      @default(1000) // عدد الوحدات التي تنتجها الوصفة × 1000
+  notes     String?
+  createdAt DateTime @default(now())
+
+  product          Item              @relation("RecipeProduct", fields: [productId], references: [id])
+  lines            RecipeLine[]
+  productionOrders ProductionOrder[]
+
+  @@unique([productId, version])
+  @@index([productId, isActive])
+}
+
+model RecipeLine {
+  id         Int  @id @default(autoincrement())
+  recipeId   Int
+  materialId Int
+  qty        Int // لكل outputQty، × 1000
+  wasteBp    Int  @default(0)
+
+  recipe   ProductRecipe @relation(fields: [recipeId], references: [id], onDelete: Cascade)
+  material Item          @relation("RecipeMaterial", fields: [materialId], references: [id])
+
+  @@unique([recipeId, materialId])
+}
+
+model ProductionOrder {
+  id           Int       @id @default(autoincrement())
+  number       String    @unique
+  productId    Int
+  recipeId     Int?
+  plannedQty   Int
+  completedQty Int       @default(0)
+  status       String    @default("DRAFT") // DRAFT | COMPLETED | CANCELLED
+  materialCost Int       @default(0)
+  unitCost     Int       @default(0) // تكلفة المواد لكل وحدة منتجة (درهم)
+  date         DateTime
+  completedAt  DateTime?
+  notes        String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  product   Item                 @relation(fields: [productId], references: [id])
+  recipe    ProductRecipe?       @relation(fields: [recipeId], references: [id])
+  materials ProductionMaterial[]
+
+  @@index([status, date])
+}
+
+model ProductionMaterial {
+  id          Int @id @default(autoincrement())
+  orderId     Int
+  materialId  Int
+  requiredQty Int
+  actualQty   Int
+  unitCost    Int @default(0) // لقطة عند الإكمال (درهم لكل وحدة)
+  totalCost   Int @default(0)
+
+  order    ProductionOrder @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  material Item            @relation(fields: [materialId], references: [id])
+
+  @@unique([orderId, materialId])
+}
+
+// ---------- الأطراف ----------
+
+model Supplier {
+  id        Int      @id @default(autoincrement())
+  name      String
+  phone     String?
+  address   String?
+  notes     String?
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  purchases Purchase[]
+  payments  Payment[]
+
+  @@index([name])
+}
+
+model Customer {
+  id        Int      @id @default(autoincrement())
+  name      String
+  phone     String?
+  address   String?
+  notes     String?
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  sales    Sale[]
+  payments Payment[]
+
+  @@index([name])
+}
+
+model Employee {
+  id         Int      @id @default(autoincrement())
+  code       String   @unique
+  name       String
+  phone      String?
+  jobTitle   String?
+  baseSalary Int      @default(0)
+  startDate  DateTime
+  active     Boolean  @default(true)
+  notes      String?
+  createdAt  DateTime @default(now())
+
+  transactions     EmployeeTransaction[]
+  payments         Payment[]
+  expenses         Expense[]             @relation("ExpenseEmployee")
+  expensesPaidBy   Expense[]             @relation("ExpensePaidBy")
+}
+
+// أنواع الحركات وأثرها على "المستحق للموظف":
+//   SALARY_DUE(+) BONUS(+) DEDUCTION(-) EXPENSE_ON_BEHALF(+)
+//   SALARY_PAYMENT(-) ADVANCE(-) REIMBURSEMENT(-) ADVANCE_REPAYMENT(+)
+// مصروف الرواتب = SALARY_DUE + BONUS - DEDUCTION فقط؛ السلف ليست مصروفاً.
+model EmployeeTransaction {
+  id          Int      @id @default(autoincrement())
+  employeeId  Int
+  type        String
+  amount      Int
+  date        DateTime
+  period      String? // YYYY-MM للرواتب
+  description String?
+  status      String   @default("POSTED") // POSTED | VOIDED
+  uniqueKey   String?  @unique
+  expenseId   Int?     @unique
+  createdAt   DateTime @default(now())
+
+  employee    Employee            @relation(fields: [employeeId], references: [id])
+  expense     Expense?            @relation(fields: [expenseId], references: [id])
+  allocations PaymentAllocation[]
+
+  @@index([employeeId, date])
+  @@index([type, date])
+}
+
+// ---------- المشتريات ----------
+
+model Purchase {
+  id                Int       @id @default(autoincrement())
+  number            String    @unique
+  supplierId        Int
+  supplierInvoiceNo String?
+  date              DateTime
+  dueDate           DateTime?
+  status            String    @default("DRAFT") // DRAFT | POSTED | VOIDED
+  subtotal          Int       @default(0)
+  discount          Int       @default(0)
+  total             Int       @default(0)
+  notes             String?
+  postedAt          DateTime?
+  voidedAt          DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  supplier    Supplier            @relation(fields: [supplierId], references: [id])
+  items       PurchaseItem[]
+  allocations PaymentAllocation[]
+
+  @@index([status, date])
+  @@index([supplierId])
+}
+
+model PurchaseItem {
+  id           Int @id @default(autoincrement())
+  purchaseId   Int
+  itemId       Int
+  qty          Int
+  unitCost     Int
+  lineDiscount Int @default(0)
+  lineTotal    Int
+  // قيمة المخزون بعد توزيع خصم الفاتورة نسبياً
+  stockValue   Int @default(0)
+
+  purchase Purchase @relation(fields: [purchaseId], references: [id], onDelete: Cascade)
+  item     Item     @relation(fields: [itemId], references: [id])
+}
+
+// ---------- المبيعات ----------
+
+model Sale {
+  id         Int       @id @default(autoincrement())
+  number     String    @unique
+  customerId Int?
+  date       DateTime
+  dueDate    DateTime?
+  status     String    @default("DRAFT") // DRAFT | POSTED | VOIDED
+  subtotal   Int       @default(0)
+  discount   Int       @default(0)
+  total      Int       @default(0)
+  costTotal  Int       @default(0) // لقطة تكلفة المواد عند الترحيل
+  notes      String?
+  postedAt   DateTime?
+  voidedAt   DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  customer    Customer?           @relation(fields: [customerId], references: [id])
+  items       SaleItem[]
+  returns     SaleReturn[]
+  allocations PaymentAllocation[]
+
+  @@index([status, date])
+  @@index([customerId])
+}
+
+model SaleItem {
+  id           Int @id @default(autoincrement())
+  saleId       Int
+  itemId       Int
+  qty          Int
+  unitPrice    Int
+  lineDiscount Int @default(0)
+  lineTotal    Int
+  // صافي الإيراد بعد توزيع خصم الفاتورة (يُستخدم في المرتجعات)
+  netAmount    Int @default(0)
+  unitCost     Int @default(0)
+  costTotal    Int @default(0)
+
+  sale        Sale             @relation(fields: [saleId], references: [id], onDelete: Cascade)
+  item        Item             @relation(fields: [itemId], references: [id])
+  returnItems SaleReturnItem[]
+}
+
+model SaleReturn {
+  id        Int      @id @default(autoincrement())
+  number    String   @unique
+  saleId    Int
+  date      DateTime
+  total     Int
+  costTotal Int
+  status    String   @default("POSTED")
+  notes     String?
+  createdAt DateTime @default(now())
+
+  sale  Sale             @relation(fields: [saleId], references: [id])
+  items SaleReturnItem[]
+
+  @@index([saleId])
+  @@index([date])
+}
+
+model SaleReturnItem {
+  id         Int @id @default(autoincrement())
+  returnId   Int
+  saleItemId Int
+  qty        Int
+  amount     Int
+  costAmount Int
+
+  saleReturn SaleReturn @relation(fields: [returnId], references: [id], onDelete: Cascade)
+  saleItem   SaleItem   @relation(fields: [saleItemId], references: [id])
+}
+
+// ---------- النقدية والمدفوعات ----------
+
+model CashAccount {
+  id             Int      @id @default(autoincrement())
+  name           String   @unique
+  type           String   @default("CASH") // CASH | BANK
+  openingBalance Int      @default(0)
+  openingDate    DateTime
+  active         Boolean  @default(true)
+  notes          String?
+  createdAt      DateTime @default(now())
+
+  payments Payment[]
+}
+
+model Payment {
+  id         Int      @id @default(autoincrement())
+  number     String   @unique
+  direction  String // IN | OUT
+  // SALE_RECEIPT | CUSTOMER_PAYMENT | PURCHASE_PAYMENT | SUPPLIER_PAYMENT | EXPENSE_PAYMENT
+  // OTHER_INCOME | EMPLOYEE | SALE_REFUND | TRANSFER
+  kind       String
+  accountId  Int
+  amount     Int
+  date       DateTime
+  method     String   @default("CASH") // CASH | BANK_TRANSFER | CHEQUE | CARD | OTHER
+  reference  String?
+  customerId Int?
+  supplierId Int?
+  employeeId Int?
+  transferId String? // يربط طرفي التحويل بين الحسابات
+  status     String   @default("POSTED") // POSTED | VOIDED
+  notes      String?
+  voidedAt   DateTime?
+  createdAt  DateTime @default(now())
+
+  account     CashAccount         @relation(fields: [accountId], references: [id])
+  customer    Customer?           @relation(fields: [customerId], references: [id])
+  supplier    Supplier?           @relation(fields: [supplierId], references: [id])
+  employee    Employee?           @relation(fields: [employeeId], references: [id])
+  allocations PaymentAllocation[]
+
+  @@index([accountId, date])
+  @@index([status, date])
+  @@index([customerId])
+  @@index([supplierId])
+}
+
+model PaymentAllocation {
+  id                    Int      @id @default(autoincrement())
+  paymentId             Int
+  amount                Int
+  saleId                Int?
+  purchaseId            Int?
+  expenseId             Int?
+  otherIncomeId         Int?
+  employeeTransactionId Int?
+  createdAt             DateTime @default(now())
+
+  payment             Payment              @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  sale                Sale?                @relation(fields: [saleId], references: [id])
+  purchase            Purchase?            @relation(fields: [purchaseId], references: [id])
+  expense             Expense?             @relation(fields: [expenseId], references: [id])
+  otherIncome         OtherIncome?         @relation(fields: [otherIncomeId], references: [id])
+  employeeTransaction EmployeeTransaction? @relation(fields: [employeeTransactionId], references: [id])
+
+  @@index([paymentId])
+  @@index([saleId])
+  @@index([purchaseId])
+  @@index([expenseId])
+  @@index([otherIncomeId])
+  @@index([employeeTransactionId])
+}
+
+// ---------- المصروفات والإيرادات الأخرى ----------
+
+model Expense {
+  id                 Int       @id @default(autoincrement())
+  number             String    @unique
+  date               DateTime
+  dueDate            DateTime?
+  categoryId         Int
+  description        String
+  amount             Int
+  employeeId         Int?
+  paidByEmployeeId   Int? // دفعه موظف من ماله الخاص نيابة عن الشركة
+  recurringExpenseId Int?
+  period             String?
+  receiptPath        String? // مسار داخل مجلد storage (غير عام)
+  receiptName        String?
+  status             String    @default("POSTED") // POSTED | VOIDED
+  notes              String?
+  voidedAt           DateTime?
+  createdAt          DateTime  @default(now())
+
+  category            Category             @relation(fields: [categoryId], references: [id])
+  employee            Employee?            @relation("ExpenseEmployee", fields: [employeeId], references: [id])
+  paidByEmployee      Employee?            @relation("ExpensePaidBy", fields: [paidByEmployeeId], references: [id])
+  recurringExpense    RecurringExpense?    @relation(fields: [recurringExpenseId], references: [id])
+  allocations         PaymentAllocation[]
+  employeeTransaction EmployeeTransaction?
+
+  @@unique([recurringExpenseId, period])
+  @@index([status, date])
+  @@index([categoryId])
+}
+
+model RecurringExpense {
+  id         Int      @id @default(autoincrement())
+  name       String
+  categoryId Int
+  amount     Int
+  dayOfMonth Int
+  active     Boolean  @default(true)
+  notes      String?
+  createdAt  DateTime @default(now())
+
+  category Category  @relation(fields: [categoryId], references: [id])
+  expenses Expense[]
+}
+
+model OtherIncome {
+  id          Int       @id @default(autoincrement())
+  number      String    @unique
+  date        DateTime
+  categoryId  Int?
+  description String
+  amount      Int
+  status      String    @default("POSTED")
+  notes       String?
+  voidedAt    DateTime?
+  createdAt   DateTime  @default(now())
+
+  category    Category?           @relation(fields: [categoryId], references: [id])
+  allocations PaymentAllocation[]
+
+  @@index([status, date])
+}
+
+// ---------- التذكيرات والتقارير ----------
+
+model Reminder {
+  id         Int       @id @default(autoincrement())
+  // CUSTOM | DEBT_DUE_SOON | DEBT_OVERDUE | SALARY | RECURRING_EXPENSE | LOW_STOCK | MONTHLY_REPORT
+  type       String
+  title      String
+  message    String?
+  dueDate    DateTime
+  status     String    @default("OPEN") // OPEN | DONE | DISMISSED
+  // مفتاح منع التكرار: الحدث + موعد الاستحقاق
+  dedupeKey  String    @unique
+  link       String?
+  recurrence String    @default("NONE") // NONE | WEEKLY | MONTHLY | YEARLY (للتذكيرات المخصصة)
+  entityType String?
+  entityId   Int?
+  closedAt   DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([status, dueDate])
+  @@index([type, entityType, entityId])
+}
+
+model MonthlyReport {
+  id          Int      @id @default(autoincrement())
+  period      String   @unique // YYYY-MM
+  data        String // JSON محسوب من الحركات الأصلية وقت التوليد
+  generatedAt DateTime @default(now())
+  auto        Boolean  @default(false)
+}
