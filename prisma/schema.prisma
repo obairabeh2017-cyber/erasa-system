@@ -13,10 +13,10 @@ generator client {
 }
 
 datasource db {
-  provider  = "postgresql"
-  // DATABASE_URL: اتصال Neon عبر pooler (للتطبيق) — DATABASE_URL_UNPOOLED: اتصال مباشر (للترحيلات)
-  url       = env("DATABASE_URL")
-  directUrl = env("DATABASE_URL_UNPOOLED")
+  provider = "postgresql"
+  // يُحدَّد الرابط الفعلي في src/lib/db.ts و scripts/vercel-build.mjs من أي اسم متغير
+  // تستخدمه Vercel/Neon (DATABASE_URL أو POSTGRES_URL ...). الترحيلات تستخدم الرابط المباشر.
+  url      = env("DATABASE_URL")
 }
 
 // ---------- الإعدادات والمالك ----------
