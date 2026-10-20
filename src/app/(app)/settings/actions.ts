@@ -1,5 +1,6 @@
 "use server";
 
+import { onCloud } from "@/lib/cloud";
 import path from "node:path";
 import { prisma } from "@/lib/db";
 import { ownerAction } from "@/lib/actions";
@@ -50,8 +51,8 @@ export const logoutEverywhereAction = ownerAction(async () => {
 });
 
 export const backupNowAction = ownerAction(async () => {
-  // حفظ نسخة على قرص الجهاز (التشغيل المحلي فقط؛ على Vercel استخدم زر التنزيل)
-  if (process.env.VERCEL) throw new BusinessError("على الاستضافة السحابية استخدم زر «تنزيل نسخة احتياطية» لحفظها على جهازك");
+  // حفظ نسخة على قرص الجهاز (التشغيل المحلي فقط؛ على الاستضافة السحابية استخدم زر التنزيل)
+  if (onCloud()) throw new BusinessError("على الاستضافة السحابية استخدم زر «تنزيل نسخة احتياطية» لحفظها على جهازك");
   const s = await prisma.appSettings.findUniqueOrThrow({ where: { id: 1 } });
   const r = await writeBackupFile(prisma, { keep: s.backupKeep });
   await audit(prisma, "BACKUP_CREATED", "Backup", null, { file: path.basename(r.file) });

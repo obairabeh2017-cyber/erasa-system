@@ -2,6 +2,7 @@ import { Prisma, type PrismaClient } from "@prisma/client";
 import fs from "node:fs";
 import path from "node:path";
 import { checkStockIntegrity } from "./inventory";
+import { onCloud } from "../cloud";
 
 /**
  * النسخ الاحتياطي: ملف JSON كامل يحتوي كل الجداول (بما فيها الإيصالات).
@@ -157,9 +158,9 @@ export async function writeBackupFile(db: PrismaClient, opts: { dir?: string; ke
   return { file, size: json.length };
 }
 
-/** نسخة تلقائية على القرص إذا مرّت المدة المحددة (لا تعمل على Vercel لعدم وجود قرص دائم). */
+/** نسخة تلقائية على القرص إذا مرّت المدة المحددة (لا تعمل على الاستضافة السحابية لعدم وجود قرص دائم). */
 export async function autoBackupIfDue(db: PrismaClient, now = new Date()) {
-  if (process.env.VERCEL) return null;
+  if (onCloud()) return null;
   const s = await db.appSettings.upsert({ where: { id: 1 }, create: { id: 1 }, update: {} });
   const intervalMs = Math.max(1, s.backupIntervalHours) * 3600_000;
   if (s.lastAutoBackupAt && now.getTime() - s.lastAutoBackupAt.getTime() < intervalMs) return null;

@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { prisma } from "../db";
 import { SESSION_COOKIE, SESSION_MAX_AGE, signSession, verifySession } from "./session";
 import { hashPassword, validatePasswordStrength, verifyPassword } from "./password";
+import { onCloud } from "../cloud";
 
 /** يتحقق من رمز الجلسة ومن أن نسخة الجلسة لم تُبطَل (مثلاً بعد تغيير كلمة المرور). */
 export async function authorizeToken(db: PrismaClient, token: string | undefined | null) {
@@ -82,8 +83,8 @@ export async function attemptLogin(username: string, password: string, key: stri
   jar.set(SESSION_COOKIE, token, {
     httpOnly: true,
     sameSite: "lax",
-    // على Vercel يكون الاتصال HTTPS دائماً
-    secure: process.env.COOKIE_SECURE === "true" || process.env.VERCEL === "1",
+    // على الاستضافة السحابية يكون الاتصال HTTPS دائماً
+    secure: process.env.COOKIE_SECURE === "true" || onCloud(),
     path: "/",
     maxAge: SESSION_MAX_AGE,
   });

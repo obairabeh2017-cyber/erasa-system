@@ -5,8 +5,8 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 /**
- * مهمة يومية تستدعيها Vercel Cron: توليد التذكيرات وحفظ تقرير الشهر المنتهي (بدون تكرار).
- * محمية بالمتغير CRON_SECRET (ترسله Vercel في ترويسة Authorization).
+ * مسار يمكن أن تستدعيه خدمة جدولة خارجية (مثل cron-job.org): توليد التذكيرات وحفظ تقرير الشهر المنتهي (بدون تكرار).
+ * محمي بالمتغير CRON_SECRET في ترويسة Authorization: Bearer <CRON_SECRET>.
  */
 export async function GET(req: Request) {
   const secret = process.env.CRON_SECRET;

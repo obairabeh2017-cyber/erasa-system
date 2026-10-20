@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "prisma generate && next build",
-    "vercel-build": "node scripts/vercel-build.mjs",
+    "cloud-build": "node scripts/cloud-build.mjs",
     "start": "node server.mjs",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",

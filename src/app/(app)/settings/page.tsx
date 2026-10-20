@@ -1,3 +1,4 @@
+import { onCloud } from "@/lib/cloud";
 import { prisma } from "@/lib/db";
 import { PageHeader, Section, Alert } from "@/components/ui";
 import { ActionForm, ConfirmButton, SubmitButton } from "@/components/forms";
@@ -25,8 +26,8 @@ export default async function SettingsPage() {
     prisma.unit.findMany({ orderBy: { name: "asc" } }),
     prisma.auditLog.findMany({ orderBy: { id: "desc" }, take: 50 }),
   ]);
-  const onCloud = !!process.env.VERCEL;
-  const backups = onCloud ? [] : listBackups().slice(0, 30);
+  const isCloud = onCloud();
+  const backups = isCloud ? [] : listBackups().slice(0, 30);
 
   return (
     <div className="space-y-5">
@@ -54,13 +55,13 @@ export default async function SettingsPage() {
         </div>
         <div className="mb-4 flex flex-wrap items-end gap-2">
           <a href={"/api/backup"} download className="btn btn-primary">⬇ تنزيل نسخة احتياطية كاملة</a>
-          {!onCloud && (
+          {!isCloud && (
             <ActionForm action={backupNowAction} showSuccess>
               <SubmitButton className="btn btn-secondary">حفظ نسخة على هذا الجهاز الآن</SubmitButton>
             </ActionForm>
           )}
         </div>
-        {!onCloud && (
+        {!isCloud && (
           <>
             <p className="mb-2 text-sm text-stone-600">مجلد النسخ المحلية: <code dir="ltr" className="rounded bg-stone-100 px-1">{backupDir()}</code> — آخر نسخة تلقائية: {formatDateTime(s.lastAutoBackupAt)}</p>
             {backups.length === 0 ? <p className="text-sm text-stone-500">لا توجد نسخ محلية بعد.</p> : (

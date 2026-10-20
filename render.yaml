@@ -1,0 +1,35 @@
+# مخطط النشر على Render (Blueprint) — يُقرأ تلقائياً عند الضغط على زر «Deploy to Render».
+# قاعدة البيانات على Neon (PostgreSQL مجاني دائم)، ورابطها يُدخل في DATABASE_URL.
+services:
+  - type: web
+    name: erasa-system
+    runtime: node
+    plan: free
+    region: frankfurt
+    branch: main
+    autoDeploy: true
+    buildCommand: npm ci && npm run cloud-build
+    startCommand: node server.mjs
+    healthCheckPath: /login
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: HOST
+        value: 0.0.0.0
+      # Render يضع خادماً وسيطاً أمام التطبيق؛ حماية «الشبكة المحلية فقط» غير مناسبة هنا
+      - key: LOCAL_NETWORK_ONLY
+        value: "false"
+      - key: COOKIE_SECURE
+        value: "true"
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: CRON_SECRET
+        generateValue: true
+      # رابط Neon: يُطلب منك عند الإنشاء
+      - key: DATABASE_URL
+        sync: false
+      - key: OWNER_USERNAME
+        value: owner
+      # كلمة مرور المالك لأول دخول: يُطلب منك عند الإنشاء (8 أحرف على الأقل، أرقام وحروف)
+      - key: OWNER_PASSWORD
+        sync: false
