@@ -39,6 +39,7 @@ const NAV: { group: string; items: { href: string; label: string; icon: string }
       { href: "/employees", label: "الموظفون", icon: "🧑‍🔧" },
       { href: "/reminders", label: "التذكيرات", icon: "🔔" },
       { href: "/reports", label: "التقارير", icon: "📊" },
+      { href: "/phone", label: "الوصول من الهاتف", icon: "📱" },
       { href: "/settings", label: "الإعدادات والنسخ", icon: "⚙️" },
     ],
   },

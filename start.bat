@@ -11,25 +11,28 @@ if errorlevel 1 (
 )
 
 if not exist ".env" (
-  echo [خطأ] ملف .env غير موجود. راجع خطوات التثبيت في README.md
+  echo إنشاء ملف الإعدادات .env لأول مرة...
+  copy /y ".env.example" ".env" >nul
+  node -e "const fs=require('fs');let s=fs.readFileSync('.env','utf8');s=s.replace('change-me-to-a-long-random-secret-value-please',require('crypto').randomBytes(48).toString('hex'));fs.writeFileSync('.env',s)"
+  echo.
+  echo [مهم] افتح الملف .env وضع كلمة مرور المالك في OWNER_PASSWORD ثم شغّل start.bat مرة أخرى.
+  notepad .env
   pause
-  exit /b 1
+  exit /b 0
 )
 
 if not exist "node_modules" (
-  echo تثبيت الحزم لأول مرة...
+  echo تثبيت الحزم لأول مرة - يحتاج إنترنت مرة واحدة فقط...
   call npm install || goto :fail
 )
-
-echo تطبيق ترحيلات قاعدة البيانات (إن وُجدت)...
-call npx prisma migrate deploy || goto :fail
 
 if not exist ".next\BUILD_ID" (
   echo بناء البرنامج لأول مرة - قد يستغرق دقيقة أو دقيقتين...
   call npm run build || goto :fail
 )
 
-start "" /min cmd /c "timeout /t 6 >nul & start http://localhost:3000"
+rem قاعدة البيانات المدمجة وترحيلاتها تُشغَّل تلقائياً داخل البرنامج
+start "" /min cmd /c "timeout /t 8 >nul & start http://localhost:3000"
 call npm start
 goto :eof
 
