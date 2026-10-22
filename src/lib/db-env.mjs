@@ -43,10 +43,40 @@ function anyDirect(env) {
  */
 export function resolveDatabaseUrls(env = process.env) {
   const pooled = first(POOLED, env);
-  const direct = first(DIRECT, env) ?? anyDirect(env) ?? pooled;
+  let direct = first(DIRECT, env) ?? anyDirect(env);
   const p = pooled ?? direct;
   if (!p) return null;
-  return { pooled: p, direct: direct ?? p };
+  // Neon: الرابط المباشر هو نفسه بدون «-pooler» في اسم المضيف (الترحيلات تحتاج اتصالاً مباشراً)
+  if (!direct || direct.value === p.value) {
+    const d = withoutNeonPooler(p.value);
+    direct = d !== p.value ? { name: `${p.name} (مباشر)`, value: d } : p;
+  }
+  return { pooled: { name: p.name, value: withPgbouncerFlag(p.value) }, direct };
+}
+
+/** ep-x-pooler.region.aws.neon.tech → ep-x.region.aws.neon.tech */
+export function withoutNeonPooler(url) {
+  try {
+    const u = new URL(url);
+    if (!/-pooler\./.test(u.hostname)) return url;
+    u.hostname = u.hostname.replace("-pooler.", ".");
+    u.searchParams.delete("pgbouncer");
+    return u.toString();
+  } catch {
+    return url;
+  }
+}
+
+/** اتصال عبر PgBouncer (pooler) يحتاج pgbouncer=true حتى لا يستخدم Prisma الاستعلامات المُعدّة المحفوظة. */
+export function withPgbouncerFlag(url) {
+  try {
+    const u = new URL(url);
+    if (!/-pooler\./.test(u.hostname) || u.searchParams.has("pgbouncer")) return url;
+    u.searchParams.set("pgbouncer", "true");
+    return u.toString();
+  } catch {
+    return url;
+  }
 }
 
 /**

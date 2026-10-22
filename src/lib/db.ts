@@ -2,6 +2,7 @@ import { PrismaClient } from "@prisma/client";
 import { PGlite } from "@electric-sql/pglite";
 import { PrismaPGlite } from "pglite-prisma-adapter";
 import { resolveDatabaseUrls } from "./db-env.mjs";
+import { onCloud } from "./cloud";
 
 // عميل Prisma واحد لكل عملية Node، يُنشأ عند أول استعلام فقط (لا عند تحميل الكود أثناء البناء).
 // - إن وُجد رابط PostgreSQL (مثل Neon) يُستخدم.
@@ -12,6 +13,10 @@ const g = globalThis as unknown as { prisma?: PrismaClient; __erasaPglite?: PGli
 function createClient(): PrismaClient {
   const urls = resolveDatabaseUrls();
   if (urls) return new PrismaClient({ datasourceUrl: urls.pooled.value });
+  // على الاستضافة السحابية لا يوجد قرص دائم: القاعدة المدمجة ستفقد البيانات، فلا تُستخدم أبداً
+  if (onCloud()) {
+    throw new Error("DATABASE_URL غير مضبوط على الاستضافة السحابية: اربط قاعدة Neon بالمشروع ثم أعد النشر (Redeploy).");
+  }
   const pg = (g.__erasaPglite ??= new PGlite(process.env.LOCAL_DB_DIR || "./data/pglite"));
   return new PrismaClient({ adapter: new PrismaPGlite(pg) });
 }

@@ -10,6 +10,7 @@
     "dev": "next dev",
     "build": "prisma generate && next build",
     "cloud-build": "node scripts/cloud-build.mjs",
+    "vercel-build": "node scripts/cloud-build.mjs",
     "start": "node server.mjs",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
