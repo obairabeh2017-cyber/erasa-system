@@ -151,6 +151,25 @@ describe("16) الحماية: المستخدم غير المصادق لا يصل
 });
 
 describe("الدخول على الإنترنت", () => {
+  it("كلمة مرور ضعيفة في OWNER_PASSWORD: رسالة واضحة ولا تُحتسب محاولات فاشلة", async () => {
+    const db = await freshDb();
+    const { checkCredentials } = await import("@/lib/auth/owner");
+    process.env.OWNER_USERNAME = "EHAB";
+    process.env.OWNER_PASSWORD = "ehab77e"; // 7 أحرف
+    try {
+      for (let i = 0; i < 7; i++) expect(await checkCredentials(db, "EHAB", "ehab77e", "ip-w")).toMatch(/مرفوضة: كلمة المرور يجب ألا تقل عن 8 أحرف/);
+      expect(await db.loginAttempt.count()).toBe(0);
+      expect(await db.ownerSettings.count()).toBe(0);
+      // بعد تصحيحها يُنشأ الحساب ويُقبل الدخول من نفس المصدر (لم يُقفل)
+      process.env.OWNER_PASSWORD = "ehab77e1";
+      expect(await checkCredentials(db, "EHAB", "ehab77e1", "ip-w")).toBeNull();
+      expect((await db.ownerSettings.findUniqueOrThrow({ where: { id: 1 } })).username).toBe("EHAB");
+    } finally {
+      delete process.env.OWNER_USERNAME;
+      delete process.env.OWNER_PASSWORD;
+    }
+  });
+
   it("ينشئ المالك من متغيرات البيئة مرة واحدة ويوقف الدخول بعد 5 محاولات فاشلة", async () => {
     const db = await freshDb();
     const { checkCredentials } = await import("@/lib/auth/owner");
