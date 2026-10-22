@@ -5,7 +5,7 @@ import { ActionForm, ConfirmButton, SubmitButton } from "@/components/forms";
 import { listBackups, backupDir } from "@/lib/services/backup";
 import { formatDateTime } from "@/lib/dates";
 import {
-  addCategoryAction, addUnitAction, backupNowAction, changePasswordAction, integrityAction,
+  addCategoryAction, addUnitAction, backupNowAction, changePasswordAction, integrityAction, restoreUploadAction,
   logoutEverywhereAction, renameCategoryAction, saveSettingsAction,
 } from "./actions";
 
@@ -74,6 +74,17 @@ export default async function SettingsPage() {
             )}
           </>
         )}
+      </Section>
+
+      <Section title="استعادة من ملف نسخة احتياطية">
+        <Alert tone="danger">تستبدل الاستعادة <b>كل</b> البيانات الحالية في هذا البرنامج ببيانات الملف (تتم في عملية واحدة: إن فشلت لا يتغير شيء). بعدها يصبح اسم المستخدم وكلمة المرور كما كانا في النسخة، وستحتاج لتسجيل الدخول من جديد.</Alert>
+        <ActionForm action={restoreUploadAction} encType="multipart/form-data" className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div><label className="label" htmlFor="backup">ملف النسخة الاحتياطية (erasa-backup-….json)</label><input id="backup" name="backup" type="file" accept="application/json,.json" className="input" required /></div>
+          <div><label className="label" htmlFor="confirm-restore">للتأكيد اكتب: استبدال</label><input id="confirm-restore" name="confirm" className="input" autoComplete="off" required /></div>
+          <div className="sm:col-span-2">
+            <ConfirmButton title="استعادة النسخة الاحتياطية" message="سيتم حذف كل البيانات الحالية واستبدالها ببيانات الملف. هل أنت متأكد؟" confirmText="نعم، استبدل البيانات">استعادة البيانات من الملف</ConfirmButton>
+          </div>
+        </ActionForm>
       </Section>
 
       <Section title="تصدير البيانات (CSV متوافق مع Excel)">

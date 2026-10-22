@@ -6,7 +6,7 @@ import { prisma } from "@/lib/db";
 import { ownerAction } from "@/lib/actions";
 import * as f from "@/lib/form";
 import { audit } from "@/lib/audit";
-import { checkDatabase, writeBackupFile } from "@/lib/services/backup";
+import { checkDatabase, importAll, writeBackupFile, type BackupDump } from "@/lib/services/backup";
 import { checkStockIntegrity } from "@/lib/services/inventory";
 import { hashPassword, validatePasswordStrength, verifyPassword } from "@/lib/auth/password";
 import { clearSession, requireOwner } from "@/lib/auth/owner";
@@ -84,4 +84,29 @@ export const renameCategoryAction = ownerAction(async (fd) => {
 export const addUnitAction = ownerAction(async (fd) => {
   await prisma.unit.create({ data: { name: f.text(fd, "name", "اسم الوحدة", 30) } });
   return { message: "تمت إضافة الوحدة" };
+});
+
+/**
+ * استعادة نسخة احتياطية مرفوعة (ملف JSON من «تنزيل نسخة احتياطية»).
+ * تستبدل كل البيانات الحالية في معاملة واحدة: إن فشل أي جزء لا يتغير شيء.
+ * بعد الاستعادة يصبح حساب المالك وكلمة مروره كما في النسخة، فيُطلب الدخول من جديد.
+ */
+export const restoreUploadAction = ownerAction(async (fd) => {
+  if (f.optText(fd, "confirm", 20) !== "استبدال") throw new BusinessError("اكتب كلمة «استبدال» للتأكيد");
+  const file = fd.get("backup");
+  if (!file || typeof file === "string" || file.size === 0) throw new BusinessError("اختر ملف النسخة الاحتياطية (JSON)");
+  let dump: BackupDump;
+  try {
+    dump = JSON.parse(await file.text()) as BackupDump;
+  } catch {
+    throw new BusinessError("الملف ليس نسخة احتياطية صالحة (JSON غير مقروء)");
+  }
+  try {
+    await importAll(prisma, dump, { replace: true });
+  } catch (e) {
+    throw new BusinessError(`فشلت الاستعادة ولم يتغير شيء: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  await audit(prisma, "BACKUP_RESTORED_UPLOAD", "Backup", null, { exportedAt: dump.exportedAt, counts: dump.counts });
+  await clearSession();
+  return "/login";
 });
