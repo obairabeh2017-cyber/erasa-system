@@ -222,6 +222,31 @@ describe("الدخول على الإنترنت", () => {
       delete process.env.OWNER_PASSWORD;
     }
   });
+
+  it("إعادة الضبط لمرة واحدة: تستبدل الحساب الموجود مرة واحدة فقط وعلى الاستضافة فقط", async () => {
+    const db = await freshDb();
+    const { applyOneTimeReset, checkCredentials } = await import("@/lib/auth/owner");
+    const { hashPassword } = await import("@/lib/auth/password");
+    await db.ownerSettings.create({ data: { id: 1, username: "owner", passwordHash: await hashPassword("Old12345") } });
+    const reset = { id: "t-1", username: "EHAB", hash: await hashPassword("reset7k4m9") };
+
+    expect(await applyOneTimeReset(db, "EHAB", "reset7k4m9", reset)).toBe(false); // ليس على الاستضافة
+    process.env.CLOUD_HOSTING = "true";
+    try {
+      expect(await applyOneTimeReset(db, "EHAB", "wrong", reset)).toBe(false);
+      expect(await applyOneTimeReset(db, "ehab", "reset7k4m9", reset)).toBe(true);
+      const o = await db.ownerSettings.findUniqueOrThrow({ where: { id: 1 } });
+      expect(o.username).toBe("EHAB");
+      expect(await checkCredentials(db, "EHAB", "reset7k4m9", "ip-r")).toBeNull();
+      expect(await checkCredentials(db, "owner", "Old12345", "ip-r")).toMatch(/غير صحيحة/);
+      // مرة واحدة فقط: بعد تغيير كلمة المرور لا تعيدها
+      await db.ownerSettings.update({ where: { id: 1 }, data: { passwordHash: await hashPassword("Changed99") } });
+      expect(await applyOneTimeReset(db, "EHAB", "reset7k4m9", reset)).toBe(false);
+      expect(await checkCredentials(db, "EHAB", "reset7k4m9", "ip-s")).toMatch(/غير صحيحة/);
+    } finally {
+      delete process.env.CLOUD_HOSTING;
+    }
+  });
 });
 
 describe("17) النسخ الاحتياطي والاستعادة", () => {

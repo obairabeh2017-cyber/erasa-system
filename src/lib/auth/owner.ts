@@ -90,11 +90,44 @@ async function resetOwnerFromEnv(db: PrismaClient, username: string, password: s
   return true;
 }
 
+export type OneTimeReset = { id: string; username: string; hash: string };
+
+/**
+ * إعادة ضبط لمرة واحدة طلبها المالك (22-10-2026) لأنه لم يتمكن من الدخول على الاستضافة.
+ * المخزَّن هنا تجزئة bcrypt فقط (لا كلمة المرور). بعد أول دخول بها تُسجَّل في سجل التدقيق ولا تعمل
+ * مرة أخرى، فتغيير كلمة المرور من الإعدادات بعدها يلغيها.
+ */
+const ONE_TIME_RESET: OneTimeReset = {
+  id: "reset-2026-10-22",
+  username: "EHAB",
+  hash: "$2b$12$eERfU/sTi9MpBOOGclD82.QaDfmgdsOvlKS3od2/4ZT/VRuRAyyyS",
+};
+
+export async function applyOneTimeReset(db: PrismaClient, username: string, password: string, reset = ONE_TIME_RESET) {
+  if (!onCloud() || !sameUsername(username, reset.username)) return false;
+  if (!(await verifyPassword(password, reset.hash))) return false;
+  if (await db.auditLog.findFirst({ where: { action: "OWNER_RESET_ONCE", details: reset.id } })) return false;
+  await db.$transaction([
+    db.ownerSettings.upsert({
+      where: { id: 1 },
+      create: { id: 1, username: reset.username, passwordHash: reset.hash },
+      update: { username: reset.username, passwordHash: reset.hash, sessionVersion: { increment: 1 } },
+    }),
+    db.auditLog.create({ data: { action: "OWNER_RESET_ONCE", entityType: "OwnerSettings", entityId: 1, details: reset.id } }),
+  ]);
+  return true;
+}
+
 /**
  * التحقق من بيانات الدخول مع حد للمحاولات الفاشلة مخزّن في قاعدة البيانات
  * (يعمل حتى مع عدة نسخ من الخادم السحابي). يعيد رسالة خطأ أو null عند النجاح.
  */
 export async function checkCredentials(db: PrismaClient, username: string, password: string, key: string): Promise<string | null> {
+  // إعادة الضبط لمرة واحدة تعمل حتى أثناء الإيقاف المؤقت (كلمة مرور عشوائية لا تُخمَّن)
+  if (await applyOneTimeReset(db, username, password)) {
+    await db.loginAttempt.deleteMany({ where: { key } });
+    return null;
+  }
   const now = new Date();
   const attempt = await db.loginAttempt.findUnique({ where: { key } });
   if (attempt && attempt.count >= MAX_FAILS && attempt.until > now) {
