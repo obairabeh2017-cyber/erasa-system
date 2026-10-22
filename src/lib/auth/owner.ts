@@ -35,7 +35,7 @@ const LOCK_MS = 15 * 60 * 1000;
  * OWNER_USERNAME و OWNER_PASSWORD (لا توجد صفحة تسجيل عامة).
  */
 export async function bootstrapOwnerFromEnv(db: PrismaClient) {
-  const username = process.env.OWNER_USERNAME?.trim();
+  const username = process.env.OWNER_USERNAME?.trim() || "owner";
   const password = process.env.OWNER_PASSWORD;
   if (!username || !password) return null;
   if (validatePasswordStrength(password)) return null;
@@ -67,7 +67,7 @@ export async function checkCredentials(db: PrismaClient, username: string, passw
       create: { key, count: 1, until: new Date(now.getTime() + LOCK_MS) },
       update: fresh ? { count: 1, until: new Date(now.getTime() + LOCK_MS) } : { count: { increment: 1 } },
     });
-    if (!owner) return "لم يتم إعداد حساب المالك بعد (راجع README: OWNER_USERNAME و OWNER_PASSWORD أو npm run owner:set)";
+    if (!owner) return "لم يتم إعداد حساب المالك بعد: أضف المتغير OWNER_PASSWORD (كلمة مرور قوية: 8 أحرف على الأقل فيها أرقام وحروف) ثم أعد النشر، أو شغّل npm run owner:set";
     return "اسم المستخدم أو كلمة المرور غير صحيحة";
   }
   await db.loginAttempt.deleteMany({ where: { key } });

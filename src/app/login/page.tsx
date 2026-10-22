@@ -10,7 +10,7 @@ export const metadata = { title: "تسجيل الدخول" };
 export default async function LoginPage() {
   if (await getOwner()) redirect("/");
   const settings = await prisma.appSettings.findUnique({ where: { id: 1 } });
-  const hasOwner = (await prisma.ownerSettings.count()) > 0 || !!process.env.OWNER_USERNAME;
+  const hasOwner = (await prisma.ownerSettings.count()) > 0 || !!process.env.OWNER_PASSWORD;
   return (
     <main className="flex min-h-screen items-center justify-center bg-brand-900 px-4">
       <div className="card w-full max-w-sm p-6">
@@ -21,7 +21,7 @@ export default async function LoginPage() {
         </div>
         {!hasOwner && (
           <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
-            لم يُنشأ حساب المالك بعد. من مجلد البرنامج شغّل: <code dir="ltr" className="font-mono">npm run owner:set</code>
+            لم يُنشأ حساب المالك بعد. على الاستضافة: أضف المتغير <code dir="ltr" className="font-mono">OWNER_PASSWORD</code> ثم أعد النشر. على الحاسوب: اكتبه في ملف <code dir="ltr" className="font-mono">.env</code> أو شغّل <code dir="ltr" className="font-mono">npm run owner:set</code>
           </div>
         )}
         <ActionForm action={loginAction} className="flex flex-col gap-4" showSuccess={false}>
