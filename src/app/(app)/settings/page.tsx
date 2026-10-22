@@ -133,6 +133,11 @@ export default async function SettingsPage() {
             </ActionForm>
           </Section>
           <Section title="كلمة المرور والجلسات">
+            {isCloud && process.env.OWNER_PASSWORD && (
+              <div className="mb-3">
+                <Alert tone="warn">المتغير <code dir="ltr">OWNER_PASSWORD</code> ما زال موجوداً في إعدادات الاستضافة، ومن يدخل به يعيد ضبط اسم المستخدم وكلمة المرور. احذفه من إعدادات الاستضافة بعد التأكد من الدخول.</Alert>
+              </div>
+            )}
             <ActionForm action={changePasswordAction} className="space-y-3" resetOnSuccess>
               <div><label className="label" htmlFor="current">كلمة المرور الحالية</label><input id="current" name="current" type="password" className="input" autoComplete="current-password" required dir="ltr" /></div>
               <div><label className="label" htmlFor="next">كلمة المرور الجديدة (8 أحرف على الأقل، أرقام وحروف)</label><input id="next" name="next" type="password" className="input" autoComplete="new-password" required dir="ltr" /></div>

@@ -1,3 +1,4 @@
+import { createHash, timingSafeEqual } from "node:crypto";
 import type { PrismaClient } from "@prisma/client";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
@@ -38,23 +39,55 @@ export async function bootstrapOwnerFromEnv(db: PrismaClient) {
   return (await bootstrapOwnerWithReason(db)).owner;
 }
 
+/** بيانات المالك من متغيرات البيئة، أو null إن لم تُضبط OWNER_PASSWORD (المسافات في الطرفين تُهمل). */
+function envOwner() {
+  const password = process.env.OWNER_PASSWORD?.trim();
+  if (!password) return null;
+  return { username: process.env.OWNER_USERNAME?.trim() || "owner", password };
+}
+
+/** اسم المستخدم لا يفرّق بين الأحرف الكبيرة والصغيرة (EHAB = ehab). */
+function sameUsername(a: string, b: string) {
+  return a.trim().toLowerCase() === b.trim().toLowerCase();
+}
+
+function samePassword(a: string, b: string) {
+  return timingSafeEqual(createHash("sha256").update(a).digest(), createHash("sha256").update(b).digest());
+}
+
 /** مثل bootstrapOwnerFromEnv لكن يعيد أيضاً سبب عدم الإنشاء (لعرض رسالة واضحة للمالك). */
 export async function bootstrapOwnerWithReason(db: PrismaClient) {
-  const username = process.env.OWNER_USERNAME?.trim() || "owner";
-  const password = process.env.OWNER_PASSWORD;
-  if (!password) return { owner: null, reason: "missing" as const };
-  const weak = validatePasswordStrength(password);
+  const env = envOwner();
+  if (!env) return { owner: null, reason: "missing" as const };
+  const weak = validatePasswordStrength(env.password);
   if (weak) return { owner: null, reason: "weak" as const, detail: weak };
   const existing = await db.ownerSettings.findUnique({ where: { id: 1 } });
   if (existing) return { owner: existing, reason: null };
   try {
-    const owner = await db.ownerSettings.create({ data: { id: 1, username, passwordHash: await hashPassword(password) } });
+    const owner = await db.ownerSettings.create({ data: { id: 1, username: env.username, passwordHash: await hashPassword(env.password) } });
     return { owner, reason: null };
   } catch (e) {
     const owner = await db.ownerSettings.findUnique({ where: { id: 1 } });
     if (!owner) console.error("[auth] owner bootstrap failed", e);
     return { owner, reason: owner ? null : ("error" as const) };
   }
+}
+
+/**
+ * على الاستضافة السحابية لا يوجد سطر أوامر لـ npm run owner:set، فإن طابق الدخولُ
+ * OWNER_USERNAME و OWNER_PASSWORD الحاليين يُعاد ضبط الحساب ليطابقهما
+ * (مثلاً إذا أُنشئ الحساب باسم مستخدم قديم ثم عُدّل المتغير). لذلك يُحذف OWNER_PASSWORD بعد الدخول.
+ */
+async function resetOwnerFromEnv(db: PrismaClient, username: string, password: string) {
+  const env = envOwner();
+  if (!onCloud() || !env || validatePasswordStrength(env.password)) return false;
+  if (!sameUsername(env.username, username) || !samePassword(password, env.password)) return false;
+  await db.ownerSettings.update({
+    where: { id: 1 },
+    data: { username: env.username, passwordHash: await hashPassword(env.password), sessionVersion: { increment: 1 } },
+  });
+  await db.auditLog.create({ data: { action: "OWNER_RESET_ENV", entityType: "OwnerSettings", entityId: 1 } });
+  return true;
 }
 
 /**
@@ -80,7 +113,9 @@ export async function checkCredentials(db: PrismaClient, username: string, passw
     }
     owner = boot.owner;
   }
-  const ok = owner.username === username && (await verifyPassword(password, owner.passwordHash));
+  const ok =
+    (sameUsername(owner.username, username) && (await verifyPassword(password, owner.passwordHash))) ||
+    (await resetOwnerFromEnv(db, username, password));
   if (!ok) {
     const fresh = !attempt || attempt.until <= now;
     await db.loginAttempt.upsert({

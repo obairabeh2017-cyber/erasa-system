@@ -182,10 +182,42 @@ describe("الدخول على الإنترنت", () => {
       // حتى كلمة المرور الصحيحة مرفوضة أثناء الإيقاف المؤقت لهذا المصدر
       expect(await checkCredentials(db, "owner", "Strong1234", "ip-2")).toMatch(/إيقاف/);
       expect(await checkCredentials(db, "owner", "Strong1234", "ip-3")).toBeNull();
-      // تغيير متغيرات البيئة لاحقاً لا يغيّر المالك الموجود
+      // على الحاسوب: تغيير متغيرات البيئة لاحقاً لا يغيّر المالك الموجود (يُستخدم npm run owner:set)
       process.env.OWNER_PASSWORD = "Another1234";
       expect(await checkCredentials(db, "owner", "Another1234", "ip-4")).toMatch(/غير صحيحة/);
     } finally {
+      delete process.env.OWNER_USERNAME;
+      delete process.env.OWNER_PASSWORD;
+    }
+  });
+
+  it("على الاستضافة: الدخول بـ OWNER_USERNAME/OWNER_PASSWORD المعدّلين يعيد ضبط الحساب الموجود", async () => {
+    const db = await freshDb();
+    const { checkCredentials } = await import("@/lib/auth/owner");
+    process.env.CLOUD_HOSTING = "true";
+    process.env.OWNER_PASSWORD = "ehab77e1"; // بدون OWNER_USERNAME ⇒ يُنشأ الحساب باسم owner
+    try {
+      expect(await checkCredentials(db, "owner", "ehab77e1", "ip-c")).toBeNull();
+      const before = await db.ownerSettings.findUniqueOrThrow({ where: { id: 1 } });
+
+      // عُدّل اسم المستخدم بعد إنشاء الحساب: الدخول بالاسم الجديد يعيد الضبط (ولا يفرّق بين الأحرف الكبيرة والصغيرة)
+      process.env.OWNER_USERNAME = "EHAB";
+      expect(await checkCredentials(db, "EHAB", "wrong1234", "ip-c")).toMatch(/غير صحيحة/);
+      expect(await checkCredentials(db, "ehab", "ehab77e1", "ip-c")).toBeNull();
+      const after = await db.ownerSettings.findUniqueOrThrow({ where: { id: 1 } });
+      expect(after.username).toBe("EHAB");
+      expect(after.sessionVersion).toBe(before.sessionVersion + 1); // الجلسات القديمة تنتهي
+      expect(await checkCredentials(db, "owner", "ehab77e1", "ip-d")).toMatch(/غير صحيحة/);
+
+      // كلمة مرور جديدة في المتغير (مع مسافات زائدة بالخطأ) تُعتمد عند الدخول بها
+      process.env.OWNER_PASSWORD = " NewPass99 ";
+      expect(await checkCredentials(db, "EHAB", "NewPass99", "ip-d")).toBeNull();
+      // وبعد حذف المتغير تبقى كلمة المرور المحفوظة هي المعتمدة
+      delete process.env.OWNER_PASSWORD;
+      expect(await checkCredentials(db, "EHAB", "NewPass99", "ip-e")).toBeNull();
+      expect(await checkCredentials(db, "EHAB", "ehab77e1", "ip-e")).toMatch(/غير صحيحة/);
+    } finally {
+      delete process.env.CLOUD_HOSTING;
       delete process.env.OWNER_USERNAME;
       delete process.env.OWNER_PASSWORD;
     }
